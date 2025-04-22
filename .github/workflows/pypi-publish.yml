@@ -1,0 +1,15 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    uses: spryx-devops-workflows/.github/workflows/spryx-pypi-publish.yml@main
+    with:
+      python-version: "3.12"         # Optional, Python version to use (default: "3.12")
+      test-matrix: true              # Optional, run CI tests before publishing (default: true)
+      publish-to-testpypi: false     # Optional, also publish to TestPyPI (default: false)
+      check-description: true        # Optional, validate package description (default: true)
+    secrets: inherit
