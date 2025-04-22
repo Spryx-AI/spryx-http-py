@@ -10,8 +10,9 @@ jobs:
   test:
     uses: Spryx-AI/spryx-devops-workflows/.github/workflows/python-ci.yml@main
     with:
-      python-versions: '["3.11", "3.12"]'
-      fail-fast: false
-      skip-lint: false
-      tox-env: "py"
-      upload-coverage: false
+      python-version: "3.12"                               # Optional, Python version for running tox
+      skip-lint: false                                     # Optional, skip the linting step
+      tox-lint-env: "lint"                                 # Optional, tox environment for linting
+      skip-typecheck: false                                # Optional, skip the type checking step
+      tox-typecheck-env: "typecheck"                       # Optional, tox environment for type checking
+      upload-coverage: true                                # Optional, upload to Codecov
