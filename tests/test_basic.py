@@ -22,6 +22,6 @@ def test_package_modules():
         "settings.py",
     ]
     for module in module_files:
-        assert os.path.isfile(
-            f"spryx_http/{module}"
-        ), f"Module file {module} should exist"
+        assert os.path.isfile(f"spryx_http/{module}"), (
+            f"Module file {module} should exist"
+        )
