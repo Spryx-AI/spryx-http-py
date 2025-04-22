@@ -10,6 +10,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   publish:
+    needs: ci
     uses: Spryx-AI/spryx-devops-workflows/.github/workflows/spryx-pypi-publish.yml@main
     with:
       python-version: "3.12"         # Optional, Python version to use (default: "3.12")
