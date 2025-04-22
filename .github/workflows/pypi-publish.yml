@@ -1,10 +1,14 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   publish:
     uses: Spryx-AI/spryx-devops-workflows/.github/workflows/spryx-pypi-publish.yml@main
     with:
