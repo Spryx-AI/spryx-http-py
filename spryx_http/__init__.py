@@ -1,6 +1,8 @@
-from spryx_infra.http_client.auth import AuthStrategy, HmacAuth, JwtAuth, NoAuth
-from spryx_infra.http_client.base import SpryxAsyncClient, T
-from spryx_infra.http_client.exceptions import (
+__version__ = "0.1.0"
+
+from spryx_http.auth import AuthStrategy, HmacAuth, JwtAuth, NoAuth
+from spryx_http.base import SpryxAsyncClient, T
+from spryx_http.exceptions import (
     AuthenticationError,
     ClientError,
     ForbiddenError,
@@ -10,7 +12,7 @@ from spryx_infra.http_client.exceptions import (
     ServerError,
     raise_for_status,
 )
-from spryx_infra.http_client.pagination import AsyncPaginator
+from spryx_http.pagination import AsyncPaginator
 
 __all__ = [
     "SpryxAsyncClient",
