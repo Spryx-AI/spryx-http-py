@@ -10,9 +10,4 @@ jobs:
   test:
     uses: Spryx-AI/spryx-devops-workflows/.github/workflows/python-ci.yml@main
     with:
-      python-version: "3.12"                              
-      skip-lint: false                                     
-      tox-lint-env: "lint"                                
-      skip-typecheck: false                                
-      tox-typecheck-env: "typecheck"                      
-      upload-coverage: false
+      python-version: "3.11"
