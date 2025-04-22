@@ -1,0 +1,17 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    uses: Spryx-AI/spryx-devops-workflows/.github/workflows/python-ci.yml@main
+    with:
+      python-versions: '["3.11", "3.12"]'
+      fail-fast: false
+      skip-lint: false
+      tox-env: "py"
+      upload-coverage: false
