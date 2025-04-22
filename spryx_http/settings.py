@@ -12,10 +12,10 @@ class HttpClientSettings(BaseSettings):
     - HTTP_TRACE_ENABLED: Enable distributed tracing
     """
 
-    timeout_s: float = Field(default=30.0, env="HTTP_TIMEOUT_S")
-    retries: int = Field(default=3, env="HTTP_RETRIES")
-    backoff_factor: float = Field(default=0.5, env="HTTP_BACKOFF_FACTOR")
-    trace_enabled: bool = Field(default=True, env="HTTP_TRACE_ENABLED")
+    timeout_s: float = Field(default=30.0, validation_alias="HTTP_TIMEOUT_S")
+    retries: int = Field(default=3, validation_alias="HTTP_RETRIES")
+    backoff_factor: float = Field(default=0.5, validation_alias="HTTP_BACKOFF_FACTOR")
+    trace_enabled: bool = Field(default=True, validation_alias="HTTP_TRACE_ENABLED")
 
     class Config:
         env_prefix = "HTTP_"
