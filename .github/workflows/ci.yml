@@ -15,4 +15,4 @@ jobs:
       tox-lint-env: "lint"                                 # Optional, tox environment for linting
       skip-typecheck: false                                # Optional, skip the type checking step
       tox-typecheck-env: "typecheck"                       # Optional, tox environment for type checking
-      upload-coverage: true                                # Optional, upload to Codecov
+      upload-coverage: false
