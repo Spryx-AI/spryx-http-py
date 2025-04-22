@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  test:
+  quality-check:
     uses: Spryx-AI/spryx-devops-workflows/.github/workflows/python-ci.yml@main
     with:
       python-version: "3.11"
