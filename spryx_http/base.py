@@ -169,14 +169,28 @@ class SpryxAsyncClient(httpx.AsyncClient):
         """
         if self._token is None:
             await self.authenticate_application()
+            if self._token is None:
+                raise Exception(
+                    "Failed to obtain a valid authentication token. Authentication did not provide a token."
+                )
 
         if self.is_refresh_token_expired:
             await self.authenticate_application()
+            if self._token is None:
+                raise Exception(
+                    "Failed to obtain a valid authentication token. Re-authentication did not provide a token."
+                )
             return self._token
 
         if self.is_token_expired:
             await self._generate_new_token()
+            if self._token is None:
+                raise Exception(
+                    "Failed to obtain a valid authentication token. Token refresh did not provide a token."
+                )
 
+        # At this point, we've done all we can to get a valid token
+        # If it's still None, raise an exception
         if self._token is None:
             raise Exception(
                 "Failed to obtain a valid authentication token. Check your credentials and try again."
