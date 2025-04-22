@@ -1,4 +1,5 @@
-from typing import Any, Dict, List, Optional, Type, TypeVar, Union, overload
+import time
+from typing import Any, Dict, List, Optional, Type, TypeVar, Union
 
 import httpx
 import logfire
@@ -23,20 +24,36 @@ class SpryxAsyncClient(httpx.AsyncClient):
     - Pydantic model response parsing
     """
 
+    _token: Optional[str] = None
+    _token_expires_at: Optional[int] = None
+    _refresh_token: Optional[str] = None
+    _refresh_token_expires_at: Optional[int] = None
+
     def __init__(
         self,
         *,
+        base_url: str,
+        application_id: Optional[str] = None,
+        application_secret: Optional[str] = None,
         auth_strategy: Optional[AuthStrategy] = None,
         settings: Optional[HttpClientSettings] = None,
         **kwargs,
     ):
-        """Initialize the client.
+        """Initialize the Spryx HTTP async client.
 
         Args:
+            base_url: Base URL for all API requests.
+            application_id: Application ID for authentication.
+            application_secret: Application secret for authentication.
             auth_strategy: Authentication strategy to use.
             settings: HTTP client settings.
             **kwargs: Additional arguments to pass to httpx.AsyncClient.
         """
+        self._base_url = base_url
+
+        self._application_id = application_id
+        self._application_secret = application_secret
+
         self.auth_strategy = auth_strategy or NoAuth()
         self.settings = settings or get_http_settings()
 
@@ -48,7 +65,124 @@ class SpryxAsyncClient(httpx.AsyncClient):
         if "transport" not in kwargs:
             kwargs["transport"] = build_retry_transport(settings=self.settings)
 
+        self._token_expires_at = None
+
         super().__init__(**kwargs)
+
+    @property
+    def is_token_expired(self) -> bool:
+        """Check if the access token is expired.
+
+        Returns:
+            bool: True if the token is expired or not set, False otherwise.
+        """
+        if self._token is None or self._token_expires_at is None:
+            return True
+
+        current_time = int(time.time())
+        return current_time >= self._token_expires_at
+
+    @property
+    def is_refresh_token_expired(self) -> bool:
+        """Check if the refresh token is expired.
+
+        Returns:
+            bool: True if the refresh token is expired or not set, False otherwise.
+        """
+        if self._refresh_token is None or self._refresh_token_expires_at is None:
+            return True
+
+        current_time = int(time.time())
+        return current_time >= self._refresh_token_expires_at
+
+    async def authenticate_application(self) -> None:
+        """Authenticate the application with credentials provided in the constructor.
+
+        Uses the application_id and application_secret provided during initialization
+        to authenticate with the API and obtain access and refresh tokens.
+
+        Raises:
+            ValueError: If application_id or application_secret is not provided.
+        """
+        if self._application_id is None:
+            raise ValueError("application_id is required")
+
+        if self._application_secret is None:
+            raise ValueError("application_secret is required")
+
+        payload = {
+            "application_id": self._application_id,
+            "application_secret": self._application_secret,
+        }
+        response = await self.request(
+            "POST", f"{self._base_url}/v1/auth/application", json=payload
+        )
+        json_response = response.json()
+        data = json_response.get("data", {})
+
+        self._token_expires_at = data.get("exp")
+        self._token = json_response.get("access_token")
+        self._refresh_token = json_response.get("refresh_token")
+        self._refresh_token_expires_at = data.get("refresh_token_exp")
+
+    async def _generate_new_token(self):
+        """Generate a new access token using the refresh token.
+
+        This method is called automatically when the access token expires
+        but the refresh token is still valid.
+
+        Raises:
+            ValueError: If refresh token is not available.
+        """
+        if self._refresh_token is None:
+            raise ValueError(
+                "Refresh token is not available. Please authenticate with authenticate_application() first."
+            )
+
+        payload = {"refresh_token": self._refresh_token}
+
+        response = await self.request(
+            "POST",
+            url=f"{self._base_url}/v1/auth/application/refresh-token",
+            json=payload,
+        )
+
+        json_response = response.json()
+        data = json_response.get("data")
+
+        self._token_expires_at = data.get("exp")
+        self._token = json_response.get("access_token")
+
+    async def _get_token(self) -> str:
+        """Get a valid authentication token.
+
+        This method handles token lifecycle management, including:
+        - Initial authentication if no token exists
+        - Re-authentication if refresh token has expired
+        - Token refresh if access token has expired but refresh token is valid
+
+        Returns:
+            str: A valid authentication token.
+
+        Raises:
+            Exception: If unable to obtain a valid token.
+        """
+        if self._token is None:
+            await self.authenticate_application()
+
+        if self.is_refresh_token_expired:
+            await self.authenticate_application()
+            return self._token
+
+        if self.is_token_expired:
+            await self._generate_new_token()
+
+        if self._token is None:
+            raise Exception(
+                "Failed to obtain a valid authentication token. Check your credentials and try again."
+            )
+
+        return self._token
 
     async def request(
         self,
@@ -146,37 +280,42 @@ class SpryxAsyncClient(httpx.AsyncClient):
     async def _make_request(
         self,
         method: str,
-        url: str,
+        path: str,
         *,
-        model_cls: Optional[Type[T]] = None,
+        cast_to: Type[T],
         params: Optional[Dict[str, Any]] = None,
         json: Optional[Dict[str, Any]] = None,
         **kwargs,
-    ) -> Union[Dict[str, Any], T, List[T]]:
-        """Core request method to handle HTTP requests with optional Pydantic model parsing.
+    ) -> Union[T, List[T]]:
+        """Core request method to handle HTTP requests with Pydantic model parsing.
 
-        This method handles all HTTP requests and decides whether to parse the response
-        as a Pydantic model based on whether model_cls is provided.
+        This method handles all HTTP requests and parses the response
+        into the provided Pydantic model.
 
         Args:
             method: HTTP method (GET, POST, PUT, PATCH, DELETE).
-            url: Request URL.
-            model_cls: Optional Pydantic model class to parse response into.
+            path: Request path to be appended to base_url.
+            cast_to: Pydantic model class to parse response into.
             params: Optional query parameters.
             json: Optional JSON data for the request body.
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[Dict[str, Any], T, List[T]]:
-                - Dict if no model_cls is provided
-                - Pydantic model instance or list of instances if model_cls is provided
+            Union[T, List[T]]: Pydantic model instance or list of instances
 
         Raises:
             HttpError: If the response status code is 4xx or 5xx.
             ValueError: If the response cannot be parsed.
         """
+        url = f"{self.base_url}/{path}"
+
+        token = await self._get_token()
+        headers = {"Authorization": f"Bearer {token}"}
+
         # Make the request using the request method to ensure auth headers are added
-        response = await self.request(method, url, params=params, json=json, **kwargs)
+        response = await self.request(
+            method, url, params=params, headers=headers, json=json, **kwargs
+        )
 
         # Raise exception for error status codes
         raise_for_status(response)
@@ -184,210 +323,121 @@ class SpryxAsyncClient(httpx.AsyncClient):
         # Parse JSON response
         json_data = response.json()
 
-        # If no model class is provided, return the raw JSON data
-        if model_cls is None:
-            return json_data
-
         # Extract data from standard response format and parse into model
         data = self._extract_data_from_response(json_data)
-        return self._parse_model_data(model_cls, data)
-
-    @overload
-    async def get(
-        self,
-        url: str,
-        *,
-        model: Type[T],
-        params: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> Union[T, List[T]]: ...
-
-    @overload
-    async def get(
-        self, url: str, *, params: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Dict[str, Any]: ...
+        return self._parse_model_data(cast_to, data)
 
     async def get(
         self,
-        url: str,
+        path: str,
         *,
-        model: Optional[Type[T]] = None,
+        cast_to: Type[T],
         params: Optional[Dict[str, Any]] = None,
         **kwargs,
-    ) -> Union[Dict[str, Any], T, List[T]]:
-        """Send a GET request and optionally parse the response into a Pydantic model.
+    ) -> Union[T, List[T]]:
+        """Send a GET request and parse the response into a Pydantic model.
 
         Args:
-            url: Request URL.
-            model: Optional Pydantic model class to parse response into.
+            path: Request path to be appended to base_url.
+            cast_to: Pydantic model class to parse response into.
             params: Optional query parameters.
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[Dict[str, Any], T, List[T]]:
-                - Dict if no model is provided
-                - Pydantic model instance or list of instances if model is provided
+            Union[T, List[T]]: Pydantic model instance or list of instances
         """
         return await self._make_request(
-            "GET", url, model_cls=model, params=params, **kwargs
+            "GET", path, cast_to=cast_to, params=params, **kwargs
         )
 
-    @overload
     async def post(
         self,
-        url: str,
+        path: str,
         *,
-        model: Type[T],
+        cast_to: Type[T],
         json: Optional[Dict[str, Any]] = None,
         **kwargs,
-    ) -> Union[T, List[T]]: ...
-
-    @overload
-    async def post(
-        self, url: str, *, json: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Dict[str, Any]: ...
-
-    async def post(
-        self,
-        url: str,
-        *,
-        model: Optional[Type[T]] = None,
-        json: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> Union[Dict[str, Any], T, List[T]]:
-        """Send a POST request and optionally parse the response into a Pydantic model.
+    ) -> Union[T, List[T]]:
+        """Send a POST request and parse the response into a Pydantic model.
 
         Args:
-            url: Request URL.
-            model: Optional Pydantic model class to parse response into.
+            path: Request path to be appended to base_url.
+            cast_to: Pydantic model class to parse response into.
             json: Optional JSON data for the request body.
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[Dict[str, Any], T, List[T]]:
-                - Dict if no model is provided
-                - Pydantic model instance or list of instances if model is provided
+            Union[T, List[T]]: Pydantic model instance or list of instances
         """
         return await self._make_request(
-            "POST", url, model_cls=model, json=json, **kwargs
+            "POST", path, cast_to=cast_to, json=json, **kwargs
         )
 
-    @overload
     async def put(
         self,
-        url: str,
+        path: str,
         *,
-        model: Type[T],
+        cast_to: Type[T],
         json: Optional[Dict[str, Any]] = None,
         **kwargs,
-    ) -> Union[T, List[T]]: ...
-
-    @overload
-    async def put(
-        self, url: str, *, json: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Dict[str, Any]: ...
-
-    async def put(
-        self,
-        url: str,
-        *,
-        model: Optional[Type[T]] = None,
-        json: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> Union[Dict[str, Any], T, List[T]]:
-        """Send a PUT request and optionally parse the response into a Pydantic model.
+    ) -> Union[T, List[T]]:
+        """Send a PUT request and parse the response into a Pydantic model.
 
         Args:
-            url: Request URL.
-            model: Optional Pydantic model class to parse response into.
+            path: Request path to be appended to base_url.
+            cast_to: Pydantic model class to parse response into.
             json: Optional JSON data for the request body.
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[Dict[str, Any], T, List[T]]:
-                - Dict if no model is provided
-                - Pydantic model instance or list of instances if model is provided
+            Union[T, List[T]]: Pydantic model instance or list of instances
         """
         return await self._make_request(
-            "PUT", url, model_cls=model, json=json, **kwargs
+            "PUT", path, cast_to=cast_to, json=json, **kwargs
         )
 
-    @overload
     async def patch(
         self,
-        url: str,
+        path: str,
         *,
-        model: Type[T],
+        cast_to: Type[T],
         json: Optional[Dict[str, Any]] = None,
         **kwargs,
-    ) -> Union[T, List[T]]: ...
-
-    @overload
-    async def patch(
-        self, url: str, *, json: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Dict[str, Any]: ...
-
-    async def patch(
-        self,
-        url: str,
-        *,
-        model: Optional[Type[T]] = None,
-        json: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> Union[Dict[str, Any], T, List[T]]:
-        """Send a PATCH request and optionally parse the response into a Pydantic model.
+    ) -> Union[T, List[T]]:
+        """Send a PATCH request and parse the response into a Pydantic model.
 
         Args:
-            url: Request URL.
-            model: Optional Pydantic model class to parse response into.
+            path: Request path to be appended to base_url.
+            cast_to: Pydantic model class to parse response into.
             json: Optional JSON data for the request body.
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[Dict[str, Any], T, List[T]]:
-                - Dict if no model is provided
-                - Pydantic model instance or list of instances if model is provided
+            Union[T, List[T]]: Pydantic model instance or list of instances
         """
         return await self._make_request(
-            "PATCH", url, model_cls=model, json=json, **kwargs
+            "PATCH", path, cast_to=cast_to, json=json, **kwargs
         )
 
-    @overload
     async def delete(
         self,
-        url: str,
+        path: str,
         *,
-        model: Type[T],
+        cast_to: Type[T],
         params: Optional[Dict[str, Any]] = None,
         **kwargs,
-    ) -> Union[T, List[T]]: ...
-
-    @overload
-    async def delete(
-        self, url: str, *, params: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Dict[str, Any]: ...
-
-    async def delete(
-        self,
-        url: str,
-        *,
-        model: Optional[Type[T]] = None,
-        params: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> Union[Dict[str, Any], T, List[T]]:
-        """Send a DELETE request and optionally parse the response into a Pydantic model.
+    ) -> Union[T, List[T]]:
+        """Send a DELETE request and parse the response into a Pydantic model.
 
         Args:
-            url: Request URL.
-            model: Optional Pydantic model class to parse response into.
+            path: Request path to be appended to base_url.
+            cast_to: Pydantic model class to parse response into.
             params: Optional query parameters.
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[Dict[str, Any], T, List[T]]:
-                - Dict if no model is provided
-                - Pydantic model instance or list of instances if model is provided
+            Union[T, List[T]]: Pydantic model instance or list of instances
         """
         return await self._make_request(
-            "DELETE", url, model_cls=model, params=params, **kwargs
+            "DELETE", path, cast_to=cast_to, params=params, **kwargs
         )
