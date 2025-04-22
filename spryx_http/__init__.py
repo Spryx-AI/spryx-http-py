@@ -1,4 +1,4 @@
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from spryx_http.auth import AuthStrategy, HmacAuth, JwtAuth, NoAuth
 from spryx_http.base import SpryxAsyncClient, T
