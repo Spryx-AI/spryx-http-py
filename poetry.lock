@@ -786,14 +786,14 @@ files = [
 
 [[package]]
 name = "spryx-core"
-version = "0.1.11"
+version = "0.1.20"
 description = "Core utilities and types for Spryx projects"
 optional = false
 python-versions = ">=3.11"
 groups = ["main"]
 files = [
-    {file = "spryx_core-0.1.11-py3-none-any.whl", hash = "sha256:07e59fce7bfa831794557380e6f125d66cc109c781405cd6e3126bb1de931aa6"},
-    {file = "spryx_core-0.1.11.tar.gz", hash = "sha256:83f4124a6581038333120972185b62a91b37a6d5834de111dbd5cd25ea9c104f"},
+    {file = "spryx_core-0.1.20-py3-none-any.whl", hash = "sha256:ebc89a1e0c50d69ffa19788244df5b28066c791cfce1f26e1ec017a81688e85a"},
+    {file = "spryx_core-0.1.20.tar.gz", hash = "sha256:4eecfedce7215fef7955a9c336cb414f55597824124f432a329de9ed7dc37e1d"},
 ]
 
 [package.dependencies]
@@ -957,4 +957,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11"
-content-hash = "a5de3a11cfce1b71727d4c2ac98c31985163ddf599fafea7cb36eeaa192f6095"
+content-hash = "93179f0b7d36bde3596c2c1bd43a6ddbfa0659149d59f2c406ffde2e421d1270"

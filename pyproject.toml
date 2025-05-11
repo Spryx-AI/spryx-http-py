@@ -1,6 +1,6 @@
 [project]
 name = "spryx-http"
-version = "0.1.4"
+version = "0.1.5"
 description = "A Python HTTP client library for Spryx services"
 authors = [
     {name = "Pedro Cantidio",email = "ppcantidio@gmail.com"}
@@ -23,7 +23,7 @@ dependencies = [
     "logfire (>=3.14.0,<4.0.0)",
     "pydantic (>=2.11.3,<3.0.0)",
     "pydantic-settings (>=2.9.1,<3.0.0)",
-    "spryx-core (==0.1.11)"
+    "spryx-core (>=0.1.11,<0.2.0)"
 ]
 
 [project.urls]
