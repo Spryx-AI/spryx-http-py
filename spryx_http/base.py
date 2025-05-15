@@ -60,6 +60,7 @@ class SpryxAsyncClient(httpx.AsyncClient):
         application_secret: Optional[str] = None,
         auth_strategy: Optional[AuthStrategy] = None,
         settings: Optional[HttpClientSettings] = None,
+        iam_base_url: Optional[str] = None,
         **kwargs,
     ):
         """Initialize the Spryx HTTP async client.
@@ -73,6 +74,7 @@ class SpryxAsyncClient(httpx.AsyncClient):
             **kwargs: Additional arguments to pass to httpx.AsyncClient.
         """
         self._base_url = base_url
+        self._iam_base_url = iam_base_url
 
         self._application_id = application_id
         self._application_secret = application_secret
@@ -137,7 +139,9 @@ class SpryxAsyncClient(httpx.AsyncClient):
             "application_id": self._application_id,
             "application_secret": self._application_secret,
         }
-        response = await self.request("POST", "/iam/v1/auth/application", json=payload)
+        response = await self.request(
+            "POST", f"{self._iam_base_url}/v1/auth/application", json=payload
+        )
         json_response = response.json()
         data = json_response.get("data", {})
 
@@ -163,7 +167,7 @@ class SpryxAsyncClient(httpx.AsyncClient):
 
         response = await self.request(
             "POST",
-            url=f"{self._base_url}/v1/auth/refresh-token",
+            url=f"{self._iam_base_url}/v1/auth/refresh-token",
             json=payload,
         )
 
