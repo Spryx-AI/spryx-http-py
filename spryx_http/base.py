@@ -120,7 +120,7 @@ class SpryxAsyncClient(httpx.AsyncClient):
         current_time = int(time.time())
         return current_time >= self._refresh_token_expires_at
 
-    async def authenticate_application(self) -> None:
+    async def authenticate_application(self) -> str:
         """Authenticate the application with credentials provided in the constructor.
 
         Uses the application_id and application_secret provided during initialization
@@ -148,6 +148,7 @@ class SpryxAsyncClient(httpx.AsyncClient):
         self._token_expires_at = timestamp_from_iso(data.get("data", {}).get("exp"))
         self._token = data.get("access_token")
         self._refresh_token = data.get("refresh_token")
+        return self._token
 
     async def _generate_new_token(self):
         """Generate a new access token using the refresh token.
@@ -163,19 +164,24 @@ class SpryxAsyncClient(httpx.AsyncClient):
                 "Refresh token is not available. Please authenticate with authenticate_application() first."
             )
 
-        payload = {"refresh_token": self._refresh_token}
+        try:
+            payload = {"refresh_token": self._refresh_token}
 
-        response = await self.request(
-            "POST",
-            url=f"{self._iam_base_url}/v1/auth/refresh-token",
-            json=payload,
-        )
+            response = await self.request(
+                "POST",
+                url=f"{self._iam_base_url}/v1/auth/refresh-token",
+                json=payload,
+            )
 
-        json_response = response.json()
-        data = json_response.get("data")
+            response.raise_for_status()
 
-        self._token_expires_at = timestamp_from_iso(data.get("exp"))
-        self._token = json_response.get("access_token")
+            json_response = response.json()
+            data = json_response.get("data")
+
+            self._token_expires_at = timestamp_from_iso(data.get("exp"))
+            self._token = json_response.get("access_token")
+        except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError):
+            return await self.authenticate_application()
 
     async def _get_token(self) -> str:
         """Get a valid authentication token.
