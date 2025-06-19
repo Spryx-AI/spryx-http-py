@@ -1,7 +1,7 @@
 __version__ = "0.1.1"
 
 from spryx_http.auth import AuthStrategy, HmacAuth, JwtAuth, NoAuth
-from spryx_http.base import SpryxAsyncClient, T
+from spryx_http.base import SpryxAsyncClient, SpryxSyncClient, T
 from spryx_http.exceptions import (
     AuthenticationError,
     ClientError,
@@ -16,6 +16,7 @@ from spryx_http.pagination import AsyncPaginator
 
 __all__ = [
     "SpryxAsyncClient",
+    "SpryxSyncClient",
     "T",  # TypeVar for generic type hints
     "AuthStrategy",
     "JwtAuth",
