@@ -87,12 +87,21 @@ class SpryxClientBase:
         if "timeout" not in kwargs:
             kwargs["timeout"] = self.settings.timeout_s
 
-        # Configure retry transport if not provided
-        if "transport" not in kwargs:
-            kwargs["transport"] = build_retry_transport(settings=self.settings)
-
         self._token_expires_at = None
         self._httpx_kwargs = kwargs
+
+    def _get_transport_kwargs(self, **kwargs):
+        """Get transport configuration for the client.
+
+        This method should be overridden by subclasses to provide
+        the appropriate transport configuration.
+        """
+        # Configure retry transport if not provided
+        if "transport" not in kwargs:
+            kwargs["transport"] = build_retry_transport(
+                settings=self.settings, is_async=True
+            )
+        return kwargs
 
     @property
     def is_token_expired(self) -> bool:
@@ -226,8 +235,9 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
             **kwargs,
         )
 
-        # Initialize httpx.AsyncClient
-        httpx.AsyncClient.__init__(self, base_url=self._base_url, **self._httpx_kwargs)
+        # Initialize httpx.AsyncClient with async transport
+        transport_kwargs = self._get_transport_kwargs(**self._httpx_kwargs)
+        httpx.AsyncClient.__init__(self, base_url=self._base_url, **transport_kwargs)
 
     async def authenticate_application(self) -> str:
         """Authenticate the application with credentials provided in the constructor.
@@ -660,8 +670,18 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
             **kwargs,
         )
 
-        # Initialize httpx.Client
-        httpx.Client.__init__(self, base_url=self._base_url, **self._httpx_kwargs)
+        # Initialize httpx.Client with sync transport
+        transport_kwargs = self._get_sync_transport_kwargs(**self._httpx_kwargs)
+        httpx.Client.__init__(self, base_url=self._base_url, **transport_kwargs)
+
+    def _get_sync_transport_kwargs(self, **kwargs):
+        """Get sync transport configuration for the client."""
+        # Configure retry transport if not provided
+        if "transport" not in kwargs:
+            kwargs["transport"] = build_retry_transport(
+                settings=self.settings, is_async=False
+            )
+        return kwargs
 
     def authenticate_application(self) -> str:
         """Authenticate the application with credentials provided in the constructor.
