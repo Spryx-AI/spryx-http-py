@@ -55,7 +55,7 @@ class SpryxClientBase:
     def __init__(
         self,
         *,
-        base_url: str,
+        base_url: Optional[str] = None,
         application_id: Optional[str] = None,
         application_secret: Optional[str] = None,
         auth_strategy: Optional[AuthStrategy] = None,
@@ -66,7 +66,7 @@ class SpryxClientBase:
         """Initialize the base Spryx HTTP client.
 
         Args:
-            base_url: Base URL for all API requests.
+            base_url: Base URL for all API requests. Can be None.
             application_id: Application ID for authentication.
             application_secret: Application secret for authentication.
             auth_strategy: Authentication strategy to use.
@@ -204,7 +204,7 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
     def __init__(
         self,
         *,
-        base_url: str,
+        base_url: Optional[str] = None,
         application_id: Optional[str] = None,
         application_secret: Optional[str] = None,
         auth_strategy: Optional[AuthStrategy] = None,
@@ -215,7 +215,7 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         """Initialize the Spryx HTTP async client.
 
         Args:
-            base_url: Base URL for all API requests.
+            base_url: Base URL for all API requests. Can be None.
             application_id: Application ID for authentication.
             application_secret: Application secret for authentication.
             auth_strategy: Authentication strategy to use.
@@ -237,7 +237,9 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
 
         # Initialize httpx.AsyncClient with async transport
         transport_kwargs = self._get_transport_kwargs(**self._httpx_kwargs)
-        httpx.AsyncClient.__init__(self, base_url=self._base_url, **transport_kwargs)
+        # Pass empty string instead of None to httpx.AsyncClient
+        httpx_base_url = "" if self._base_url is None else self._base_url
+        httpx.AsyncClient.__init__(self, base_url=httpx_base_url, **transport_kwargs)
 
     async def authenticate_application(self) -> str:
         """Authenticate the application with credentials provided in the constructor.
@@ -449,7 +451,7 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
 
         Args:
             method: HTTP method.
-            path: Request path to be appended to base_url.
+            path: Request path to be appended to base_url or a full URL if base_url is None.
             cast_to: Optional Pydantic model class to parse response into.
                     If None, returns the raw JSON data.
             params: Optional query parameters.
@@ -461,8 +463,15 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
             Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
                 Pydantic model instance(s) or raw JSON data.
         """
-        # Handle path to prevent double slashes
-        path = path.lstrip("/")
+        # Check if path is a full URL when base_url is None
+        if self._base_url is None and not path.startswith(("http://", "https://")):
+            raise ValueError(
+                "Either base_url must be provided during initialization or path must be a full URL"
+            )
+
+        # Handle path to prevent double slashes if it's not a full URL
+        if not path.startswith(("http://", "https://")):
+            path = path.lstrip("/")
 
         # Get authentication token
         token = await self._get_token()
@@ -490,7 +499,12 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
             request_kwargs[key] = value
 
         # Make the request
-        response = await self.request(**request_kwargs)
+        try:
+            response = await self.request(**request_kwargs)
+        except httpx.UnsupportedProtocol:
+            raise ValueError(
+                "Either base_url must be provided during initialization or path must be a full URL"
+            )
 
         # Handle authentication failures
         if response.status_code == 401:
@@ -639,7 +653,7 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
     def __init__(
         self,
         *,
-        base_url: str,
+        base_url: Optional[str] = None,
         application_id: Optional[str] = None,
         application_secret: Optional[str] = None,
         auth_strategy: Optional[AuthStrategy] = None,
@@ -650,7 +664,7 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
         """Initialize the Spryx HTTP sync client.
 
         Args:
-            base_url: Base URL for all API requests.
+            base_url: Base URL for all API requests. Can be None.
             application_id: Application ID for authentication.
             application_secret: Application secret for authentication.
             auth_strategy: Authentication strategy to use.
@@ -672,7 +686,9 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
 
         # Initialize httpx.Client with sync transport
         transport_kwargs = self._get_sync_transport_kwargs(**self._httpx_kwargs)
-        httpx.Client.__init__(self, base_url=self._base_url, **transport_kwargs)
+        # Pass empty string instead of None to httpx.Client
+        httpx_base_url = "" if self._base_url is None else self._base_url
+        httpx.Client.__init__(self, base_url=httpx_base_url, **transport_kwargs)
 
     def _get_sync_transport_kwargs(self, **kwargs):
         """Get sync transport configuration for the client."""
@@ -893,7 +909,7 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
 
         Args:
             method: HTTP method.
-            path: Request path to be appended to base_url.
+            path: Request path to be appended to base_url or a full URL if base_url is None.
             cast_to: Optional Pydantic model class to parse response into.
                     If None, returns the raw JSON data.
             params: Optional query parameters.
@@ -905,8 +921,15 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
             Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
                 Pydantic model instance(s) or raw JSON data.
         """
-        # Handle path to prevent double slashes
-        path = path.lstrip("/")
+        # Check if path is a full URL when base_url is None
+        if self._base_url is None and not path.startswith(("http://", "https://")):
+            raise ValueError(
+                "Either base_url must be provided during initialization or path must be a full URL"
+            )
+
+        # Handle path to prevent double slashes if it's not a full URL
+        if not path.startswith(("http://", "https://")):
+            path = path.lstrip("/")
 
         # Get authentication token
         token = self._get_token()
@@ -934,7 +957,12 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
             request_kwargs[key] = value
 
         # Make the request
-        response = self.request(**request_kwargs)
+        try:
+            response = self.request(**request_kwargs)
+        except httpx.UnsupportedProtocol:
+            raise ValueError(
+                "Either base_url must be provided during initialization or path must be a full URL"
+            )
 
         # Handle authentication failures
         if response.status_code == 401:

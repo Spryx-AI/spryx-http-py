@@ -54,6 +54,21 @@ async def main():
         raw_data = await client.get("/users/1")
         print(raw_data)
 
+    # You can also initialize the client without a base_url
+    # and use full URLs in your requests
+    client_without_base_url = SpryxAsyncClient(
+        application_id="your_app_id",
+        application_secret="your_app_secret",
+        iam_base_url="https://iam.example.com"
+    )
+    
+    async with client_without_base_url:
+        # Use full URLs in your requests
+        user = await client_without_base_url.get(
+            "https://api.example.com/users/1", 
+            cast_to=User
+        )
+
 if __name__ == "__main__":
     asyncio.run(main())
 ```
@@ -110,11 +125,30 @@ Both `SpryxAsyncClient` and `SpryxSyncClient` provide the same HTTP methods:
 
 ### Parameters
 
-- `path`: Request path to be appended to base_url
+- `path`: Request path to be appended to base_url, or a full URL if base_url is None
 - `cast_to`: Optional Pydantic model class to parse response into
 - `params`: Optional query parameters (for GET/DELETE)
 - `json`: Optional JSON data for request body (for POST/PUT/PATCH)
 - `**kwargs`: Additional arguments passed to the underlying httpx request
+
+### Client Initialization
+
+Both clients can be initialized with or without a base_url:
+
+```python
+# With base_url
+client = SpryxAsyncClient(
+    base_url="https://api.example.com",
+    # ... other parameters
+)
+
+# Without base_url (requires using full URLs in requests)
+client = SpryxAsyncClient(
+    # ... other parameters
+)
+# Then use full URLs in requests:
+await client.get("https://api.example.com/users/1")
+```
 
 ### Authentication
 
