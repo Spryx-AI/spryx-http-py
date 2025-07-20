@@ -3,6 +3,7 @@ from typing import Any, TypeVar, cast
 
 import httpx
 from pydantic import BaseModel
+from spryx_core import NotGiven
 
 from spryx_http.exceptions import (
     AuthenticationError,
@@ -241,3 +242,8 @@ class SpryxClientBase:
             raise BadRequestError(response=response, response_json=response_json)
         elif status_code >= 500 and status_code < 600:
             raise ServerError(response=response, response_json=response_json)
+
+    def _remove_not_given(self, kwargs: dict[str, Any] | None) -> dict[str, Any] | None:
+        if kwargs is None:
+            return None
+        return {k: v for k, v in kwargs.items() if v != NotGiven}

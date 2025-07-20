@@ -1,5 +1,3 @@
-__version__ = "0.1.1"
-
 from spryx_http.async_client import SpryxAsyncClient
 from spryx_http.exceptions import (
     AuthenticationError,

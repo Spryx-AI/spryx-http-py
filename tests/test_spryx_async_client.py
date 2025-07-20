@@ -113,7 +113,7 @@ class TestSpryxAsyncClientAuthentication:
     """Test OAuth 2.0 authentication flows."""
 
     @pytest.mark.asyncio
-    async def test_authenticate_client_credentials_success(self, client_config, mock_oauth_response):
+    async def test_authenticate_client_credentials_success(self, client_config):
         """Test successful client credentials authentication."""
         client = SpryxAsyncClient(**client_config)
 
@@ -170,7 +170,7 @@ class TestSpryxAsyncClientAuthentication:
             await client.authenticate_client_credentials()
 
     @pytest.mark.asyncio
-    async def test_refresh_access_token_success(self, client_config, mock_oauth_response):
+    async def test_refresh_access_token_success(self, client_config):
         """Test successful token refresh."""
         client = SpryxAsyncClient(**client_config)
         client._refresh_token = "existing_refresh_token"
@@ -200,7 +200,7 @@ class TestSpryxAsyncClientAuthentication:
             )
 
     @pytest.mark.asyncio
-    async def test_refresh_access_token_no_refresh_token(self, client_config, mock_oauth_response):
+    async def test_refresh_access_token_no_refresh_token(self, client_config):
         """Test token refresh falls back to client credentials when no refresh token."""
         client = SpryxAsyncClient(**client_config)
         client._refresh_token = None
@@ -214,7 +214,7 @@ class TestSpryxAsyncClientAuthentication:
             mock_auth.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_refresh_access_token_fails_fallback_to_client_credentials(self, client_config, mock_oauth_response):
+    async def test_refresh_access_token_fails_fallback_to_client_credentials(self, client_config):
         """Test token refresh falls back to client credentials on failure."""
         client = SpryxAsyncClient(**client_config)
         client._refresh_token = "invalid_refresh_token"
@@ -524,11 +524,13 @@ class TestSpryxAsyncClientErrorHandling:
             # Mock the request method to return appropriate responses
             with patch.object(authenticated_client, "request", new_callable=AsyncMock) as mock_request:
 
-                def side_effect(method, url, **kwargs):
+                def side_effect(
+                    _method, url, _auth_response=mock_auth_response, _error_response=mock_response, **_kwargs
+                ):
                     # Return auth response for token endpoint, error response for others
                     if url == authenticated_client._token_url:
-                        return mock_auth_response
-                    return mock_response
+                        return _auth_response
+                    return _error_response
 
                 mock_request.side_effect = side_effect
 

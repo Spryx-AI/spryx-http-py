@@ -18,7 +18,7 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
-    """Spryx HTTP async client with retry, tracing, and auth capabilities.
+    """Spryx HTTP async client with retry and auth capabilities.
 
     Extends httpx.AsyncClient with:
     - OAuth 2.0 M2M authentication with refresh token support
@@ -273,7 +273,14 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
 
         # Make the request
         try:
-            response = await self.request(method, path, headers=request_headers, params=params, json=json, **kwargs)
+            response = await self.request(
+                method,
+                path,
+                headers=self._remove_not_given(request_headers),
+                params=self._remove_not_given(params),
+                json=self._remove_not_given(json),
+                **kwargs,
+            )
         except httpx.UnsupportedProtocol as e:
             raise ValueError("Either base_url must be provided during initialization or path must be a full URL") from e
 
