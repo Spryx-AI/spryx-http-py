@@ -28,7 +28,7 @@ class TestAsyncRetryTransport:
         return AsyncRetryTransport(
             transport=mock_transport,
             max_retries=3,
-            backoff_factor=0.1,  # Small for faster tests
+            backoff_factor=0.01,  # Very small for faster tests (was 0.1)
             jitter=False,  # Disable for predictable tests
         )
 

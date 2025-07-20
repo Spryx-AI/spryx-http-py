@@ -219,17 +219,27 @@ class TestSpryxAsyncClientAuthentication:
         client = SpryxAsyncClient(**client_config)
         client._refresh_token = "invalid_refresh_token"
 
-        with (
-            patch.object(client, "post", new_callable=AsyncMock) as mock_post,
-            patch.object(client, "authenticate_client_credentials", new_callable=AsyncMock) as mock_auth,
-        ):
-            mock_post.side_effect = httpx.HTTPStatusError("Unauthorized", request=Mock(), response=Mock())
-            mock_auth.return_value = "new_access_token"
+        # Mock the request method to simulate refresh failure and auth success
+        with patch.object(client, "request", new_callable=AsyncMock) as mock_request:
+            # First call (refresh) fails, second call (auth) succeeds
+            refresh_error = httpx.HTTPStatusError("Unauthorized", request=Mock(), response=Mock())
+
+            auth_response = Mock(spec=httpx.Response)
+            auth_response.status_code = 200
+            auth_response.json.return_value = {
+                "access_token": "new_access_token",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "refresh_token": "new_refresh_token",
+            }
+            auth_response.raise_for_status.return_value = None
+
+            mock_request.side_effect = [refresh_error, auth_response]
 
             token = await client.refresh_access_token()
 
             assert token == "new_access_token"
-            mock_auth.assert_called_once()
+            assert mock_request.call_count == 2
 
     @pytest.mark.asyncio
     async def test_get_token_when_no_token(self, client_config):
