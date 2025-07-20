@@ -3,7 +3,7 @@ name = "spryx-http"
 version = "0.2.0"
 description = "A Python HTTP client library for Spryx services"
 authors = [
-    {name = "Pedro Cantidio",email = "ppcantidio@gmail.com"}
+    {name = "Pedro Cantidio",email = "pedro@spryx.ai"}
 ]
 readme = "README.md"
 requires-python = ">=3.11"
