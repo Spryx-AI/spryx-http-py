@@ -95,7 +95,12 @@ class TestAsyncRetryTransport:
     @pytest.mark.asyncio
     async def test_retry_only_idempotent_methods(self, mock_transport):
         """Test retry only happens for idempotent HTTP methods."""
-        retry_transport = AsyncRetryTransport(transport=mock_transport, max_retries=2, backoff_factor=0.1, jitter=False)
+        retry_transport = AsyncRetryTransport(
+            transport=mock_transport,
+            max_retries=2,
+            backoff_factor=0.01,  # Very small for faster tests (was 0.1)
+            jitter=False,
+        )
 
         # Test idempotent methods (should retry)
         idempotent_methods = ["GET", "HEAD", "PUT", "DELETE", "OPTIONS", "TRACE"]
@@ -215,7 +220,7 @@ class TestAsyncRetryTransport:
         retry_transport = AsyncRetryTransport(
             transport=mock_transport,
             max_retries=2,
-            backoff_factor=0.1,  # Small delay for test speed
+            backoff_factor=0.01,  # Very small delay for test speed (was 0.1)
             jitter=False,
         )
 
@@ -231,8 +236,8 @@ class TestAsyncRetryTransport:
         end_time = time.time()
 
         assert result == success_response
-        # Should have waited at least 0.1 seconds (backoff_factor * 2^0)
-        assert end_time - start_time >= 0.1
+        # Should have waited at least 0.01 seconds (backoff_factor * 2^0)
+        assert end_time - start_time >= 0.01
 
 
 class TestSyncRetryTransport:
@@ -247,7 +252,12 @@ class TestSyncRetryTransport:
     @pytest.fixture
     def retry_transport(self, mock_transport):
         """Create sync retry transport with mock underlying transport."""
-        return SyncRetryTransport(transport=mock_transport, max_retries=2, backoff_factor=0.1, jitter=False)
+        return SyncRetryTransport(
+            transport=mock_transport,
+            max_retries=2,
+            backoff_factor=0.01,  # Very small for faster tests (was 0.1)
+            jitter=False,
+        )
 
     @pytest.fixture
     def mock_request(self):
