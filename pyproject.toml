@@ -1,6 +1,6 @@
 [project]
 name = "spryx-http"
-version = "0.2.1"
+version = "0.2.2"
 description = "A Python HTTP client library for Spryx services"
 authors = [
     {name = "Pedro Cantidio",email = "pedro@spryx.ai"}
