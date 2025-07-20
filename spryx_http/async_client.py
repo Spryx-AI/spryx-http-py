@@ -23,8 +23,6 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
     Extends httpx.AsyncClient with:
     - OAuth 2.0 M2M authentication with refresh token support
     - Retry with exponential backoff
-    - Structured logging with Logfire
-    - Correlation ID propagation
     - Pydantic model response parsing
     """
 
