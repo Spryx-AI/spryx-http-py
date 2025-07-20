@@ -92,7 +92,12 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
             "client_secret": self._client_secret,
         }
 
-        oauth_token_response = await self.post(self._token_url, json=payload, cast_to=OAuthTokenResponse)
+        # Use direct HTTP request to avoid authentication loop
+        response = await self.request("POST", self._token_url, json=payload)
+        response.raise_for_status()
+
+        token_data = response.json()
+        oauth_token_response = OAuthTokenResponse.model_validate(token_data)
 
         logfire.debug("Successfully authenticated using OAuth 2.0 Client Credentials flow")
         return self._store_token_data(oauth_token_response)
@@ -121,7 +126,12 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
                 "refresh_token": self._refresh_token,
             }
 
-            oauth_token_response = await self.post(self._token_url, json=payload, cast_to=OAuthTokenResponse)
+            # Use direct HTTP request to avoid authentication loop
+            response = await self.request("POST", self._token_url, json=payload)
+            response.raise_for_status()
+
+            token_data = response.json()
+            oauth_token_response = OAuthTokenResponse.model_validate(token_data)
 
             return self._store_token_data(oauth_token_response)
 

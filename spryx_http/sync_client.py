@@ -86,6 +86,8 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
             ValueError: If client_id or client_secret is not provided.
             httpx.HTTPStatusError: If the token request fails.
         """
+        logfire.debug("Authenticating using OAuth 2.0 Client Credentials flow")
+
         if self._client_id is None:
             raise ValueError("client_id is required for OAuth 2.0 authentication")
 
@@ -98,7 +100,13 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
             "client_secret": self._client_secret,
         }
 
-        oauth_token_response = self.post(self._token_url, json=payload, cast_to=OAuthTokenResponse)
+        # Use direct HTTP request to avoid authentication loop
+        response = self.request("POST", self._token_url, json=payload)
+        response.raise_for_status()
+
+        token_data = response.json()
+        oauth_token_response = OAuthTokenResponse.model_validate(token_data)
+
         return self._store_token_data(oauth_token_response)
 
     def refresh_access_token(self) -> str:
@@ -124,7 +132,13 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
                 "refresh_token": self._refresh_token,
             }
 
-            oauth_token_response = self.post(self._token_url, json=payload, cast_to=OAuthTokenResponse)
+            # Use direct HTTP request to avoid authentication loop
+            response = self.request("POST", self._token_url, json=payload)
+            response.raise_for_status()
+
+            token_data = response.json()
+            oauth_token_response = OAuthTokenResponse.model_validate(token_data)
+
             return self._store_token_data(oauth_token_response)
 
         except (httpx.HTTPStatusError, httpx.RequestError, ValueError, KeyError):
