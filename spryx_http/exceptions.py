@@ -4,8 +4,8 @@ All custom exceptions across slices should inherit from SpryxException
 to ensure consistent error handling and HTTP status code mapping.
 """
 
-from typing import Any
 from collections.abc import Mapping
+from typing import Any
 
 import httpx
 
