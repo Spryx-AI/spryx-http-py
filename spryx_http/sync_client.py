@@ -7,13 +7,13 @@ with OAuth 2.0 M2M authentication, retry logic, and Pydantic model parsing suppo
 from typing import Any, TypeVar, overload
 
 import httpx
-import logfire
 from pydantic import BaseModel
 
-from spryx_http.base import ResponseJson, SpryxClientBase
-from spryx_http.retry import build_retry_transport
-from spryx_http.settings import HttpClientSettings
-from spryx_http.types import OAuthTokenResponse
+from .base import ResponseJson, SpryxClientBase
+from .logger import logger
+from .retry import build_retry_transport
+from .settings import HttpClientSettings
+from .types import OAuthTokenResponse
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -86,7 +86,7 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
             ValueError: If client_id or client_secret is not provided.
             httpx.HTTPStatusError: If the token request fails.
         """
-        logfire.debug("Authenticating using OAuth 2.0 Client Credentials flow")
+        logger.debug("Authenticating using OAuth 2.0 Client Credentials flow")
 
         if self._client_id is None:
             raise ValueError("client_id is required for OAuth 2.0 authentication")
@@ -143,7 +143,7 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
 
         except (httpx.HTTPStatusError, httpx.RequestError, ValueError, KeyError):
             # Refresh failed, fall back to full authentication
-            logfire.debug("Refresh token failed, falling back to client credentials authentication")
+            logger.debug("Refresh token failed, falling back to client credentials authentication")
             return self.authenticate_client_credentials()
 
     def _get_token(self) -> str:

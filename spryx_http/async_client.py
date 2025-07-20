@@ -7,12 +7,12 @@ with OAuth 2.0 M2M authentication, retry logic, and Pydantic model parsing suppo
 from typing import Any, TypeVar, overload
 
 import httpx
-import logfire
 from pydantic import BaseModel
 
-from spryx_http.base import ResponseJson, SpryxClientBase
-from spryx_http.settings import HttpClientSettings
-from spryx_http.types import OAuthTokenResponse
+from .base import ResponseJson, SpryxClientBase
+from .logger import logger
+from .settings import HttpClientSettings
+from .types import OAuthTokenResponse
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -78,7 +78,7 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
             ValueError: If client_id or client_secret is not provided.
             httpx.HTTPStatusError: If the token request fails.
         """
-        logfire.debug("Authenticating using OAuth 2.0 Client Credentials flow")
+        logger.debug("Authenticating using OAuth 2.0 Client Credentials flow")
 
         if self._client_id is None:
             raise ValueError("client_id is required for OAuth 2.0 authentication")
@@ -99,7 +99,7 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         token_data = response.json()
         oauth_token_response = OAuthTokenResponse.model_validate(token_data)
 
-        logfire.debug("Successfully authenticated using OAuth 2.0 Client Credentials flow")
+        logger.debug("Successfully authenticated using OAuth 2.0 Client Credentials flow")
         return self._store_token_data(oauth_token_response)
 
     async def refresh_access_token(self) -> str:
@@ -115,9 +115,9 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         Raises:
             ValueError: If no refresh token is available and client credentials fail.
         """
-        logfire.debug("Refreshing access token")
+        logger.debug("Refreshing access token")
         if self._refresh_token is None:
-            logfire.debug("No refresh token available, doing full authentication")
+            logger.debug("No refresh token available, doing full authentication")
             return await self.authenticate_client_credentials()
 
         try:
@@ -137,7 +137,7 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
 
         except (httpx.HTTPStatusError, httpx.RequestError, ValueError, KeyError):
             # Refresh failed, fall back to full authentication
-            logfire.debug("Refresh token failed, falling back to client credentials authentication")
+            logger.debug("Refresh token failed, falling back to client credentials authentication")
             return await self.authenticate_client_credentials()
 
     async def _get_token(self) -> str:
@@ -155,11 +155,11 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
             Exception: If unable to obtain a valid token.
         """
         if self._access_token is None or self.is_token_expired:
-            logfire.debug("No access token or token is expired")
+            logger.debug("No access token or token is expired")
             try:
                 await self.refresh_access_token()
             except Exception:
-                logfire.debug("Refresh token failed, doing full authentication", _exc_info=True)
+                logger.debug("Refresh token failed, doing full authentication", exc_info=True)
                 await self.authenticate_client_credentials()
 
         if self._access_token is None:

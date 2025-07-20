@@ -33,13 +33,15 @@ Example:
     transport = build_retry_transport(settings=settings, is_async=False)
     client = httpx.Client(transport=transport)
 """
+
 import asyncio
 import random
+import time
 
 import httpx
-import logfire
 
-from spryx_http.settings import HttpClientSettings, get_http_settings
+from .logger import logger
+from .settings import HttpClientSettings, get_http_settings
 
 
 class AsyncRetryTransport(httpx.AsyncBaseTransport):
@@ -119,11 +121,9 @@ class AsyncRetryTransport(httpx.AsyncBaseTransport):
                 retry_number = self.max_retries - retries_left + 1
                 wait_time = self._calculate_backoff(retry_number)
 
-                logfire.debug(
-                    f"Retrying {method} request to {request.url} due to status code {response.status_code}",
-                    retry_number=retry_number,
-                    status_code=response.status_code,
-                    backoff_seconds=wait_time,
+                logger.debug(
+                    f"Retrying {method} request to {request.url} due to status code {response.status_code} "
+                    f"(retry {retry_number}, waiting {wait_time}s)"
                 )
 
                 # Wait before retrying
@@ -139,11 +139,9 @@ class AsyncRetryTransport(httpx.AsyncBaseTransport):
                 retry_number = self.max_retries - retries_left + 1
                 wait_time = self._calculate_backoff(retry_number)
 
-                logfire.debug(
-                    f"Retrying {method} request to {request.url} due to error",
-                    retry_number=retry_number,
-                    error=str(exc),
-                    backoff_seconds=wait_time,
+                logger.debug(
+                    f"Retrying {method} request to {request.url} due to error: {exc} "
+                    f"(retry {retry_number}, waiting {wait_time}s)"
                 )
 
                 # Wait before retrying
@@ -228,8 +226,6 @@ class SyncRetryTransport(httpx.BaseTransport):
         Raises:
             httpx.RequestError: If the request fails after all retries.
         """
-        import time
-
         method = request.method.upper()
         retries_left = self.max_retries
 
@@ -255,11 +251,9 @@ class SyncRetryTransport(httpx.BaseTransport):
                 retry_number = self.max_retries - retries_left + 1
                 wait_time = self._calculate_backoff(retry_number)
 
-                logfire.debug(
-                    f"Retrying {method} request to {request.url} due to status code {response.status_code}",
-                    retry_number=retry_number,
-                    status_code=response.status_code,
-                    backoff_seconds=wait_time,
+                logger.debug(
+                    f"Retrying {method} request to {request.url} due to status code {response.status_code} "
+                    f"(retry {retry_number}, waiting {wait_time}s)"
                 )
 
                 # Wait before retrying
@@ -275,11 +269,9 @@ class SyncRetryTransport(httpx.BaseTransport):
                 retry_number = self.max_retries - retries_left + 1
                 wait_time = self._calculate_backoff(retry_number)
 
-                logfire.debug(
-                    f"Retrying {method} request to {request.url} due to error",
-                    retry_number=retry_number,
-                    error=str(exc),
-                    backoff_seconds=wait_time,
+                logger.debug(
+                    f"Retrying {method} request to {request.url} due to error: {exc} "
+                    f"(retry {retry_number}, waiting {wait_time}s)"
                 )
 
                 # Wait before retrying
