@@ -1,26 +1,25 @@
 __version__ = "0.1.1"
 
-from spryx_http.base import SpryxAsyncClient, SpryxSyncClient
+from spryx_http.async_client import SpryxAsyncClient
 from spryx_http.exceptions import (
     AuthenticationError,
-    ClientError,
-    ForbiddenError,
-    HttpError,
+    AuthorizationError,
+    BadRequestError,
+    ConflictError,
     NotFoundError,
     RateLimitError,
     ServerError,
-    raise_for_status,
 )
+from spryx_http.sync_client import SpryxSyncClient
 
 __all__ = [
     "SpryxAsyncClient",
     "SpryxSyncClient",
-    "HttpError",
-    "ClientError",
+    "BadRequestError",
     "ServerError",
     "RateLimitError",
     "AuthenticationError",
-    "ForbiddenError",
+    "AuthorizationError",
     "NotFoundError",
-    "raise_for_status",
+    "ConflictError",
 ]

@@ -183,11 +183,11 @@ The clients raise appropriate HTTP exceptions:
 ```python
 from spryx_http.exceptions import (
     HttpError,
-    ClientError, 
+    BadRequestError, 
     ServerError,
     RateLimitError,
     AuthenticationError,
-    ForbiddenError,
+    AuthorizationError,
     NotFoundError
 )
 

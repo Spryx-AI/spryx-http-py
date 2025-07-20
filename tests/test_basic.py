@@ -36,14 +36,12 @@ class TestSpryxAsyncClient:
             client_id="test_client_id",
             client_secret="test_client_secret",
             token_url="https://auth.example.com/token",
-            scope="read write",
         )
 
         assert client._base_url == "https://api.example.com"
         assert client._client_id == "test_client_id"
         assert client._client_secret == "test_client_secret"
         assert client._token_url == "https://auth.example.com/token"
-        assert client._scope == "read write"
 
     @pytest.mark.asyncio
     async def test_async_token_expiration_check(self):

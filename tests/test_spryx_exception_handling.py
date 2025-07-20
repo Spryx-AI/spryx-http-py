@@ -5,7 +5,7 @@ import json
 import pytest
 
 from spryx_http.exceptions import (
-    ClientError,
+    BadRequestError,
     ServerError,
     SpryxException,
     raise_for_status,
@@ -82,7 +82,7 @@ def test_raise_for_status_with_non_spryx_error():
         json_data={"detail": "Resource not found"},
     )
 
-    with pytest.raises(ClientError) as exc_info:
+    with pytest.raises(BadRequestError) as exc_info:
         raise_for_status(response)
 
     assert "HTTP Error 404: Resource not found" in str(exc_info.value)
@@ -116,7 +116,7 @@ def test_raise_for_status_with_incomplete_spryx_error():
         },
     )
 
-    with pytest.raises(ClientError) as exc_info:
+    with pytest.raises(BadRequestError) as exc_info:
         raise_for_status(response)
 
     assert "HTTP Error 400" in str(exc_info.value)

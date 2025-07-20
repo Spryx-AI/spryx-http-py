@@ -2,7 +2,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from spryx_http.base import SpryxAsyncClient, SpryxSyncClient
+from spryx_http.async_client import SpryxAsyncClient
+from spryx_http.sync_client import SpryxSyncClient
 
 
 def test_sync_client_with_none_base_url():
