@@ -1,93 +1,71 @@
 import time
+from collections.abc import Mapping
 from typing import (
     Any,
-    Dict,
-    List,
-    NotRequired,
-    Optional,
-    Type,
-    TypedDict,
     TypeVar,
-    Union,
+    overload,
 )
 
 import httpx
+import jwt
 import logfire
 from pydantic import BaseModel
-from spryx_core.time import timestamp_from_iso
 
-from spryx_http.auth import AuthStrategy, NoAuth
 from spryx_http.exceptions import raise_for_status
 from spryx_http.retry import build_retry_transport
 from spryx_http.settings import HttpClientSettings, get_http_settings
 
 T = TypeVar("T", bound=BaseModel)
-
-
-# Define the TypedDict for request parameters
-class RequestKwargs(TypedDict):
-    method: str
-    url: str
-    params: NotRequired[Optional[Dict[str, Any]]]
-    json: NotRequired[Optional[Dict[str, Any]]]
-    headers: NotRequired[Dict[str, str]]
-    # Add other common httpx request parameters
-    timeout: NotRequired[Optional[Union[float, httpx.Timeout]]]
-    follow_redirects: NotRequired[Optional[bool]]
-    content: NotRequired[Optional[Any]]
+ResponseJson = Mapping[str, Any]
 
 
 class SpryxClientBase:
     """Base class for Spryx HTTP clients with common functionality.
 
     Contains shared functionality between async and sync clients:
+    - OAuth 2.0 M2M authentication with refresh token support
     - Token management and validation
-    - Authentication configuration
     - Response data processing
     - Settings management
     """
 
-    _token: Optional[str] = None
-    _token_expires_at: Optional[int] = None
-    _refresh_token: Optional[str] = None
-    _refresh_token_expires_at: Optional[int] = None
+    _access_token: str | None = None
+    _token_expires_at: int | None = None
+    _refresh_token: str | None = None
 
     def __init__(
         self,
         *,
-        base_url: Optional[str] = None,
-        application_id: Optional[str] = None,
-        application_secret: Optional[str] = None,
-        auth_strategy: Optional[AuthStrategy] = None,
-        settings: Optional[HttpClientSettings] = None,
-        iam_base_url: Optional[str] = None,
+        base_url: str | None = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        token_url: str,
+        scope: str | None = None,
+        settings: HttpClientSettings | None = None,
         **kwargs,
     ):
         """Initialize the base Spryx HTTP client.
 
         Args:
             base_url: Base URL for all API requests. Can be None.
-            application_id: Application ID for authentication.
-            application_secret: Application secret for authentication.
-            auth_strategy: Authentication strategy to use.
+            client_id: OAuth 2.0 client ID for M2M authentication.
+            client_secret: OAuth 2.0 client secret for M2M authentication.
+            token_url: OAuth 2.0 token endpoint URL.
+            scope: Optional OAuth 2.0 scope for the access token.
             settings: HTTP client settings.
-            iam_base_url: IAM base URL for authentication.
             **kwargs: Additional arguments to pass to httpx client.
         """
         self._base_url = base_url
-        self._iam_base_url = iam_base_url
-
-        self._application_id = application_id
-        self._application_secret = application_secret
-
-        self.auth_strategy = auth_strategy or NoAuth()
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._token_url = token_url
+        self._scope = scope
         self.settings = settings or get_http_settings()
 
         # Configure timeout if not provided
         if "timeout" not in kwargs:
             kwargs["timeout"] = self.settings.timeout_s
 
-        self._token_expires_at = None
         self._httpx_kwargs = kwargs
 
     def _get_transport_kwargs(self, **kwargs):
@@ -110,26 +88,31 @@ class SpryxClientBase:
         Returns:
             bool: True if the token is expired or not set, False otherwise.
         """
-        if self._token is None or self._token_expires_at is None:
+        if self._access_token is None or self._token_expires_at is None:
             return True
 
-        current_time = int(time.time())
+        # Add 30 seconds buffer to account for request time
+        current_time = int(time.time()) + 30
         return current_time >= self._token_expires_at
 
-    @property
-    def is_refresh_token_expired(self) -> bool:
-        """Check if the refresh token is expired.
+    def _parse_jwt_expiration(self, token: str) -> int:
+        """Parse JWT token to extract expiration time.
+
+        Args:
+            token: The JWT token to parse.
 
         Returns:
-            bool: True if the refresh token is expired or not set, False otherwise.
+            int: Unix timestamp of token expiration.
         """
-        if self._refresh_token is None or self._refresh_token_expires_at is None:
-            return True
+        try:
+            # Decode JWT without verification (we just need the exp claim)
+            decoded = jwt.decode(token, options={"verify_signature": False})
+            return int(decoded.get("exp", 0))
+        except Exception:
+            # If we can't parse the JWT, assume it expires in 15 minutes
+            return int(time.time()) + 900
 
-        current_time = int(time.time())
-        return current_time >= self._refresh_token_expires_at
-
-    def _extract_data_from_response(self, response_data: Dict[str, Any]) -> Any:
+    def _extract_data_from_response(self, response_data: dict[str, Any]) -> Any:
         """Extract data from standardized API response.
 
         In our standardized API response, the actual entity is always under a 'data' key.
@@ -144,7 +127,7 @@ class SpryxClientBase:
             return response_data["data"]
         return response_data
 
-    def _parse_model_data(self, model_cls: Type[T], data: Any) -> Union[T, List[T]]:
+    def _parse_model_data(self, model_cls: type[T], data: Any) -> T | list[T]:
         """Parse data into a Pydantic model or list of models.
 
         Args:
@@ -159,8 +142,8 @@ class SpryxClientBase:
         return model_cls.model_validate(data)
 
     def _process_response_data(
-        self, response: httpx.Response, cast_to: Optional[Type[T]] = None
-    ) -> Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
+        self, response: httpx.Response, cast_to: type[T] | None = None
+    ) -> T | list[T] | ResponseJson:
         """Process the response by validating status and converting to model.
 
         Args:
@@ -169,8 +152,7 @@ class SpryxClientBase:
                      If None, returns the raw JSON data.
 
         Returns:
-            Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-                Pydantic model instance(s) or raw JSON data.
+            Union[T, List[T], ResponseJson]: Pydantic model instance(s) or raw JSON data.
         """
         # Raise exception for error status codes
         raise_for_status(response)
@@ -178,8 +160,8 @@ class SpryxClientBase:
         # Parse JSON response
         try:
             json_data = response.json()
-        except ValueError:
-            raise ValueError(f"Failed to parse JSON response: {response.text}")
+        except ValueError as e:
+            raise ValueError(f"Failed to parse JSON response: {response.text}") from e
 
         # Extract data from standard response format
         data = self._extract_data_from_response(json_data)
@@ -194,8 +176,8 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
     """Spryx HTTP async client with retry, tracing, and auth capabilities.
 
     Extends httpx.AsyncClient with:
+    - OAuth 2.0 M2M authentication with refresh token support
     - Retry with exponential backoff
-    - Authentication via pluggable strategies
     - Structured logging with Logfire
     - Correlation ID propagation
     - Pydantic model response parsing
@@ -204,34 +186,34 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
     def __init__(
         self,
         *,
-        base_url: Optional[str] = None,
-        application_id: Optional[str] = None,
-        application_secret: Optional[str] = None,
-        auth_strategy: Optional[AuthStrategy] = None,
-        settings: Optional[HttpClientSettings] = None,
-        iam_base_url: Optional[str] = None,
+        base_url: str | None = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        token_url: str,
+        scope: str | None = None,
+        settings: HttpClientSettings | None = None,
         **kwargs,
     ):
         """Initialize the Spryx HTTP async client.
 
         Args:
             base_url: Base URL for all API requests. Can be None.
-            application_id: Application ID for authentication.
-            application_secret: Application secret for authentication.
-            auth_strategy: Authentication strategy to use.
+            client_id: OAuth 2.0 client ID for M2M authentication.
+            client_secret: OAuth 2.0 client secret for M2M authentication.
+            token_url: OAuth 2.0 token endpoint URL.
+            scope: Optional OAuth 2.0 scope for the access token.
             settings: HTTP client settings.
-            iam_base_url: IAM base URL for authentication.
             **kwargs: Additional arguments to pass to httpx.AsyncClient.
         """
         # Initialize base class
         SpryxClientBase.__init__(
             self,
             base_url=base_url,
-            application_id=application_id,
-            application_secret=application_secret,
-            auth_strategy=auth_strategy,
+            client_id=client_id,
+            client_secret=client_secret,
+            token_url=token_url,
+            scope=scope,
             settings=settings,
-            iam_base_url=iam_base_url,
             **kwargs,
         )
 
@@ -241,76 +223,105 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         httpx_base_url = "" if self._base_url is None else self._base_url
         httpx.AsyncClient.__init__(self, base_url=httpx_base_url, **transport_kwargs)
 
-    async def authenticate_application(self) -> str:
-        """Authenticate the application with credentials provided in the constructor.
+    async def authenticate_client_credentials(self) -> str:
+        """Authenticate using OAuth 2.0 Client Credentials flow.
 
-        Uses the application_id and application_secret provided during initialization
-        to authenticate with the API and obtain access and refresh tokens.
+        Uses the client_id and client_secret provided during initialization
+        to authenticate with the OAuth 2.0 token endpoint and obtain access and refresh tokens.
+
+        Returns:
+            str: The access token.
 
         Raises:
-            ValueError: If application_id or application_secret is not provided.
+            ValueError: If client_id or client_secret is not provided.
+            httpx.HTTPStatusError: If the token request fails.
         """
-        if self._application_id is None:
-            raise ValueError("application_id is required")
+        if self._client_id is None:
+            raise ValueError("client_id is required for OAuth 2.0 authentication")
 
-        if self._application_secret is None:
-            raise ValueError("application_secret is required")
+        if self._client_secret is None:
+            raise ValueError("client_secret is required for OAuth 2.0 authentication")
 
         payload = {
-            "application_id": self._application_id,
-            "application_secret": self._application_secret,
+            "grant_type": "client_credentials",
+            "client_id": self._client_id,
+            "client_secret": self._client_secret,
         }
-        response = await self.request(
-            "POST", f"{self._iam_base_url}/v1/auth/application", json=payload
-        )
-        json_response = response.json()
-        data = json_response.get("data", {})
 
-        self._token_expires_at = timestamp_from_iso(data.get("data", {}).get("exp"))
-        self._token = data.get("access_token")
-        self._refresh_token = data.get("refresh_token")
-        return self._token
+        if self._scope:
+            payload["scope"] = self._scope
 
-    async def _generate_new_token(self):
-        """Generate a new access token using the refresh token.
+        response = await self.request("POST", self._token_url, data=payload)
+        response.raise_for_status()
 
-        This method is called automatically when the access token expires
-        but the refresh token is still valid.
+        token_data = response.json()
+
+        self._access_token = token_data["access_token"]
+        self._refresh_token = token_data.get("refresh_token")
+
+        # Parse JWT to get expiration time
+        if self._access_token:
+            self._token_expires_at = self._parse_jwt_expiration(self._access_token)
+
+        if self._access_token is None:
+            raise ValueError("Failed to obtain access token")
+        return self._access_token
+
+    async def refresh_access_token(self) -> str:
+        """Refresh the access token using the refresh token.
+
+        This method attempts to use the refresh token to get a new access token
+        without requiring full re-authentication. If the refresh token has expired
+        or the refresh fails, it falls back to full client credentials authentication.
+
+        Returns:
+            str: The new access token.
 
         Raises:
-            ValueError: If refresh token is not available.
+            ValueError: If no refresh token is available and client credentials fail.
         """
         if self._refresh_token is None:
-            raise ValueError(
-                "Refresh token is not available. Please authenticate with authenticate_application() first."
-            )
+            # No refresh token available, do full authentication
+            return await self.authenticate_client_credentials()
 
         try:
-            payload = {"refresh_token": self._refresh_token}
+            payload = {
+                "grant_type": "refresh_token",
+                "refresh_token": self._refresh_token,
+                "client_id": self._client_id,
+                "client_secret": self._client_secret,
+            }
 
-            response = await self.request(
-                "POST",
-                url=f"{self._iam_base_url}/v1/auth/refresh-token",
-                json=payload,
-            )
-
+            response = await self.request("POST", self._token_url, data=payload)
             response.raise_for_status()
 
-            json_response = response.json()
-            data = json_response.get("data")
+            token_data = response.json()
 
-            self._token_expires_at = timestamp_from_iso(data.get("exp"))
-            self._token = json_response.get("access_token")
-        except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError):
-            return await self.authenticate_application()
+            self._access_token = token_data["access_token"]
+            # Some implementations return a new refresh token
+            if "refresh_token" in token_data:
+                self._refresh_token = token_data["refresh_token"]
+
+            # Parse JWT to get expiration time
+            if self._access_token:
+                self._token_expires_at = self._parse_jwt_expiration(self._access_token)
+
+            if self._access_token is None:
+                raise ValueError("Failed to obtain access token")
+            return self._access_token
+
+        except (httpx.HTTPStatusError, httpx.RequestError, ValueError, KeyError):
+            # Refresh failed, fall back to full authentication
+            logfire.debug("Refresh token failed, falling back to client credentials authentication")
+            return await self.authenticate_client_credentials()
 
     async def _get_token(self) -> str:
         """Get a valid authentication token.
 
         This method handles token lifecycle management, including:
         - Initial authentication if no token exists
-        - Re-authentication if refresh token has expired
-        - Token refresh if access token has expired but refresh token is valid
+        - Token refresh if access token has expired
+        - Fallback to full re-authentication if refresh fails
 
         Returns:
             str: A valid authentication token.
@@ -318,42 +329,34 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         Raises:
             Exception: If unable to obtain a valid token.
         """
-        if self._token is None:
-            await self.authenticate_application()
-            if self._token is None:
-                raise Exception(
-                    "Failed to obtain a valid authentication token. Authentication did not provide a token."
-                )
+        if self._access_token is None or self.is_token_expired:
+            if self._refresh_token is not None:
+                # Try to refresh first
+                try:
+                    await self.refresh_access_token()
+                except Exception:
+                    # If refresh fails, do full authentication
+                    await self.authenticate_client_credentials()
+            else:
+                # No refresh token, do full authentication
+                await self.authenticate_client_credentials()
 
-        if self.is_token_expired:
-            await self._generate_new_token()
-            if self._token is None:
-                raise Exception(
-                    "Failed to obtain a valid authentication token. Token refresh did not provide a token."
-                )
+        if self._access_token is None:
+            raise Exception("Failed to obtain a valid authentication token")
 
-        # At this point, we've done all we can to get a valid token
-        # If it's still None, raise an exception
-        if self._token is None:
-            raise Exception(
-                "Failed to obtain a valid authentication token. Check your credentials and try again."
-            )
-
-        return self._token
+        return self._access_token
 
     async def request(
         self,
         method: str,
-        url: Union[str, httpx.URL],
+        url: str | httpx.URL,
         *,
-        headers: Optional[Dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
         **kwargs,
     ) -> httpx.Response:
         """Send an HTTP request with added functionality.
 
         Extends the base request method with:
-        - Adding authentication headers
-        - Adding correlation ID
         - Structured logging
 
         Args:
@@ -367,10 +370,6 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         """
         # Initialize headers if None
         headers = headers or {}
-
-        # Add authentication headers
-        auth_headers = self.auth_strategy.headers()
-        headers.update(auth_headers)
 
         # Log the request with Logfire
         logfire.debug(
@@ -400,53 +399,17 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
             )
             raise
 
-    async def _handle_authentication(
-        self, response: httpx.Response, **request_kwargs: RequestKwargs
-    ) -> httpx.Response:
-        """Handle authentication failures by refreshing token and retrying."""
-        if response.status_code != 401:
-            return response
-
-        await self.authenticate_application()
-        if self._token is None:
-            raise Exception(
-                "Failed to obtain a valid authentication token. Authentication did not provide a token."
-            )
-
-        # Retry the request with the new token
-        headers = request_kwargs.get("headers", {})
-        headers.update({"Authorization": f"Bearer {self._token}"})
-        request_kwargs["headers"] = headers
-
-        return await self.request(**request_kwargs)
-
-    async def _process_response(
-        self, response: httpx.Response, cast_to: Optional[Type[T]] = None
-    ) -> Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-        """Process the response by validating status and converting to model.
-
-        Args:
-            response: The HTTP response.
-            cast_to: Optional Pydantic model class to parse response into.
-                     If None, returns the raw JSON data.
-
-        Returns:
-            Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-                Pydantic model instance(s) or raw JSON data.
-        """
-        return self._process_response_data(response, cast_to)
-
     async def _make_request(
         self,
         method: str,
         path: str,
         *,
-        cast_to: Optional[Type[T]] = None,
-        params: Optional[Dict[str, Any]] = None,
-        json: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, str]] = None,
+        cast_to: type[T] | None = None,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
         **kwargs,
-    ) -> Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
+    ) -> T | list[T] | ResponseJson:
         """Core request method to handle HTTP requests with optional Pydantic model parsing.
 
         Args:
@@ -460,8 +423,7 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-                Pydantic model instance(s) or raw JSON data.
+            Union[T, List[T], ResponseJson]: Pydantic model instance(s) or raw JSON data.
         """
         # Check if path is a full URL when base_url is None
         if self._base_url is None and not path.startswith(("http://", "https://")):
@@ -476,51 +438,63 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         # Get authentication token
         token = await self._get_token()
 
-        # Create RequestKwargs with required fields
-        request_kwargs: RequestKwargs = {
-            "method": method,
-            "url": path,
-        }
-
-        # Add optional parameters if provided
-        if params is not None:
-            request_kwargs["params"] = params
-
-        if json is not None:
-            request_kwargs["json"] = json
-
         # Handle headers
         request_headers = headers or {}
         request_headers.update({"Authorization": f"Bearer {token}"})
-        request_kwargs["headers"] = request_headers
-
-        # Add any additional kwargs
-        for key, value in kwargs.items():
-            request_kwargs[key] = value
 
         # Make the request
         try:
-            response = await self.request(**request_kwargs)
-        except httpx.UnsupportedProtocol:
+            response = await self.request(
+                method, path, headers=request_headers, params=params, json=json, **kwargs
+            )
+        except httpx.UnsupportedProtocol as e:
             raise ValueError(
                 "Either base_url must be provided during initialization or path must be a full URL"
-            )
+            ) from e
 
         # Handle authentication failures
         if response.status_code == 401:
-            response = await self._handle_authentication(response, **request_kwargs)
+            # Token might be expired, try to refresh and retry once
+            await self.refresh_access_token()
+            request_headers.update({"Authorization": f"Bearer {self._access_token}"})
+            response = await self.request(
+                method, path, headers=request_headers, params=params, json=json, **kwargs
+            )
 
         # Process the response
-        return await self._process_response(response, cast_to)
+        return self._process_response_data(response, cast_to)
+
+    # HTTP method overloads for proper type inference
+    @overload
+    async def get(
+        self,
+        path: str,
+        *,
+        cast_to: type[T],
+        params: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> T | list[T]:
+        ...
+
+    @overload
+    async def get(
+        self,
+        path: str,
+        *,
+        cast_to: None = None,
+        params: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> ResponseJson:
+        ...
 
     async def get(
         self,
         path: str,
         *,
-        cast_to: Optional[Type[T]] = None,
-        params: Optional[Dict[str, Any]] = None,
+        cast_to: type[T] | None = None,
+        params: dict[str, Any] | None = None,
         **kwargs,
-    ) -> Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
+    ) -> T | list[T] | ResponseJson:
         """Send a GET request.
 
         Args:
@@ -531,21 +505,42 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-                Pydantic model instance(s) or raw JSON data.
+            Union[T, List[T], ResponseJson]: Pydantic model instance(s) or raw JSON data.
         """
         return await self._make_request(
             "GET", path, cast_to=cast_to, params=params, **kwargs
         )
 
+    @overload
     async def post(
         self,
         path: str,
         *,
-        cast_to: Optional[Type[T]] = None,
-        json: Optional[Dict[str, Any]] = None,
+        cast_to: type[T],
+        json: dict[str, Any] | None = None,
         **kwargs,
-    ) -> Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
+    ) -> T | list[T]:
+        ...
+
+    @overload
+    async def post(
+        self,
+        path: str,
+        *,
+        cast_to: None = None,
+        json: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> ResponseJson:
+        ...
+
+    async def post(
+        self,
+        path: str,
+        *,
+        cast_to: type[T] | None = None,
+        json: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> T | list[T] | ResponseJson:
         """Send a POST request.
 
         Args:
@@ -556,21 +551,42 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-                Pydantic model instance(s) or raw JSON data.
+            Union[T, List[T], ResponseJson]: Pydantic model instance(s) or raw JSON data.
         """
         return await self._make_request(
             "POST", path, cast_to=cast_to, json=json, **kwargs
         )
 
+    @overload
     async def put(
         self,
         path: str,
         *,
-        cast_to: Optional[Type[T]] = None,
-        json: Optional[Dict[str, Any]] = None,
+        cast_to: type[T],
+        json: dict[str, Any] | None = None,
         **kwargs,
-    ) -> Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
+    ) -> T | list[T]:
+        ...
+
+    @overload
+    async def put(
+        self,
+        path: str,
+        *,
+        cast_to: None = None,
+        json: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> ResponseJson:
+        ...
+
+    async def put(
+        self,
+        path: str,
+        *,
+        cast_to: type[T] | None = None,
+        json: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> T | list[T] | ResponseJson:
         """Send a PUT request.
 
         Args:
@@ -581,21 +597,42 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-                Pydantic model instance(s) or raw JSON data.
+            Union[T, List[T], ResponseJson]: Pydantic model instance(s) or raw JSON data.
         """
         return await self._make_request(
             "PUT", path, cast_to=cast_to, json=json, **kwargs
         )
 
+    @overload
     async def patch(
         self,
         path: str,
         *,
-        cast_to: Optional[Type[T]] = None,
-        json: Optional[Dict[str, Any]] = None,
+        cast_to: type[T],
+        json: dict[str, Any] | None = None,
         **kwargs,
-    ) -> Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
+    ) -> T | list[T]:
+        ...
+
+    @overload
+    async def patch(
+        self,
+        path: str,
+        *,
+        cast_to: None = None,
+        json: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> ResponseJson:
+        ...
+
+    async def patch(
+        self,
+        path: str,
+        *,
+        cast_to: type[T] | None = None,
+        json: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> T | list[T] | ResponseJson:
         """Send a PATCH request.
 
         Args:
@@ -606,21 +643,42 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-                Pydantic model instance(s) or raw JSON data.
+            Union[T, List[T], ResponseJson]: Pydantic model instance(s) or raw JSON data.
         """
         return await self._make_request(
             "PATCH", path, cast_to=cast_to, json=json, **kwargs
         )
 
+    @overload
     async def delete(
         self,
         path: str,
         *,
-        cast_to: Optional[Type[T]] = None,
-        params: Optional[Dict[str, Any]] = None,
+        cast_to: type[T],
+        params: dict[str, Any] | None = None,
         **kwargs,
-    ) -> Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
+    ) -> T | list[T]:
+        ...
+
+    @overload
+    async def delete(
+        self,
+        path: str,
+        *,
+        cast_to: None = None,
+        params: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> ResponseJson:
+        ...
+
+    async def delete(
+        self,
+        path: str,
+        *,
+        cast_to: type[T] | None = None,
+        params: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> T | list[T] | ResponseJson:
         """Send a DELETE request.
 
         Args:
@@ -631,8 +689,7 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-                Pydantic model instance(s) or raw JSON data.
+            Union[T, List[T], ResponseJson]: Pydantic model instance(s) or raw JSON data.
         """
         return await self._make_request(
             "DELETE", path, cast_to=cast_to, params=params, **kwargs
@@ -643,8 +700,8 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
     """Spryx HTTP synchronous client with retry, tracing, and auth capabilities.
 
     Extends httpx.Client with:
+    - OAuth 2.0 M2M authentication with refresh token support
     - Retry with exponential backoff
-    - Authentication via pluggable strategies
     - Structured logging with Logfire
     - Correlation ID propagation
     - Pydantic model response parsing
@@ -653,34 +710,34 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
     def __init__(
         self,
         *,
-        base_url: Optional[str] = None,
-        application_id: Optional[str] = None,
-        application_secret: Optional[str] = None,
-        auth_strategy: Optional[AuthStrategy] = None,
-        settings: Optional[HttpClientSettings] = None,
-        iam_base_url: Optional[str] = None,
+        base_url: str | None = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        token_url: str,
+        scope: str | None = None,
+        settings: HttpClientSettings | None = None,
         **kwargs,
     ):
         """Initialize the Spryx HTTP sync client.
 
         Args:
             base_url: Base URL for all API requests. Can be None.
-            application_id: Application ID for authentication.
-            application_secret: Application secret for authentication.
-            auth_strategy: Authentication strategy to use.
+            client_id: OAuth 2.0 client ID for M2M authentication.
+            client_secret: OAuth 2.0 client secret for M2M authentication.
+            token_url: OAuth 2.0 token endpoint URL.
+            scope: Optional OAuth 2.0 scope for the access token.
             settings: HTTP client settings.
-            iam_base_url: IAM base URL for authentication.
             **kwargs: Additional arguments to pass to httpx.Client.
         """
         # Initialize base class
         SpryxClientBase.__init__(
             self,
             base_url=base_url,
-            application_id=application_id,
-            application_secret=application_secret,
-            auth_strategy=auth_strategy,
+            client_id=client_id,
+            client_secret=client_secret,
+            token_url=token_url,
+            scope=scope,
             settings=settings,
-            iam_base_url=iam_base_url,
             **kwargs,
         )
 
@@ -699,76 +756,105 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
             )
         return kwargs
 
-    def authenticate_application(self) -> str:
-        """Authenticate the application with credentials provided in the constructor.
+    def authenticate_client_credentials(self) -> str:
+        """Authenticate using OAuth 2.0 Client Credentials flow.
 
-        Uses the application_id and application_secret provided during initialization
-        to authenticate with the API and obtain access and refresh tokens.
+        Uses the client_id and client_secret provided during initialization
+        to authenticate with the OAuth 2.0 token endpoint and obtain access and refresh tokens.
+
+        Returns:
+            str: The access token.
 
         Raises:
-            ValueError: If application_id or application_secret is not provided.
+            ValueError: If client_id or client_secret is not provided.
+            httpx.HTTPStatusError: If the token request fails.
         """
-        if self._application_id is None:
-            raise ValueError("application_id is required")
+        if self._client_id is None:
+            raise ValueError("client_id is required for OAuth 2.0 authentication")
 
-        if self._application_secret is None:
-            raise ValueError("application_secret is required")
+        if self._client_secret is None:
+            raise ValueError("client_secret is required for OAuth 2.0 authentication")
 
         payload = {
-            "application_id": self._application_id,
-            "application_secret": self._application_secret,
+            "grant_type": "client_credentials",
+            "client_id": self._client_id,
+            "client_secret": self._client_secret,
         }
-        response = self.request(
-            "POST", f"{self._iam_base_url}/v1/auth/application", json=payload
-        )
-        json_response = response.json()
-        data = json_response.get("data", {})
 
-        self._token_expires_at = timestamp_from_iso(data.get("data", {}).get("exp"))
-        self._token = data.get("access_token")
-        self._refresh_token = data.get("refresh_token")
-        return self._token
+        if self._scope:
+            payload["scope"] = self._scope
 
-    def _generate_new_token(self):
-        """Generate a new access token using the refresh token.
+        response = self.request("POST", self._token_url, data=payload)
+        response.raise_for_status()
 
-        This method is called automatically when the access token expires
-        but the refresh token is still valid.
+        token_data = response.json()
+
+        self._access_token = token_data["access_token"]
+        self._refresh_token = token_data.get("refresh_token")
+
+        # Parse JWT to get expiration time
+        if self._access_token:
+            self._token_expires_at = self._parse_jwt_expiration(self._access_token)
+
+        if self._access_token is None:
+            raise ValueError("Failed to obtain access token")
+        return self._access_token
+
+    def refresh_access_token(self) -> str:
+        """Refresh the access token using the refresh token.
+
+        This method attempts to use the refresh token to get a new access token
+        without requiring full re-authentication. If the refresh token has expired
+        or the refresh fails, it falls back to full client credentials authentication.
+
+        Returns:
+            str: The new access token.
 
         Raises:
-            ValueError: If refresh token is not available.
+            ValueError: If no refresh token is available and client credentials fail.
         """
         if self._refresh_token is None:
-            raise ValueError(
-                "Refresh token is not available. Please authenticate with authenticate_application() first."
-            )
+            # No refresh token available, do full authentication
+            return self.authenticate_client_credentials()
 
         try:
-            payload = {"refresh_token": self._refresh_token}
+            payload = {
+                "grant_type": "refresh_token",
+                "refresh_token": self._refresh_token,
+                "client_id": self._client_id,
+                "client_secret": self._client_secret,
+            }
 
-            response = self.request(
-                "POST",
-                url=f"{self._iam_base_url}/v1/auth/refresh-token",
-                json=payload,
-            )
-
+            response = self.request("POST", self._token_url, data=payload)
             response.raise_for_status()
 
-            json_response = response.json()
-            data = json_response.get("data")
+            token_data = response.json()
 
-            self._token_expires_at = timestamp_from_iso(data.get("exp"))
-            self._token = json_response.get("access_token")
-        except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError):
-            return self.authenticate_application()
+            self._access_token = token_data["access_token"]
+            # Some implementations return a new refresh token
+            if "refresh_token" in token_data:
+                self._refresh_token = token_data["refresh_token"]
+
+            # Parse JWT to get expiration time
+            if self._access_token:
+                self._token_expires_at = self._parse_jwt_expiration(self._access_token)
+
+            if self._access_token is None:
+                raise ValueError("Failed to obtain access token")
+            return self._access_token
+
+        except (httpx.HTTPStatusError, httpx.RequestError, ValueError, KeyError):
+            # Refresh failed, fall back to full authentication
+            logfire.debug("Refresh token failed, falling back to client credentials authentication")
+            return self.authenticate_client_credentials()
 
     def _get_token(self) -> str:
         """Get a valid authentication token.
 
         This method handles token lifecycle management, including:
         - Initial authentication if no token exists
-        - Re-authentication if refresh token has expired
-        - Token refresh if access token has expired but refresh token is valid
+        - Token refresh if access token has expired
+        - Fallback to full re-authentication if refresh fails
 
         Returns:
             str: A valid authentication token.
@@ -776,42 +862,34 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
         Raises:
             Exception: If unable to obtain a valid token.
         """
-        if self._token is None:
-            self.authenticate_application()
-            if self._token is None:
-                raise Exception(
-                    "Failed to obtain a valid authentication token. Authentication did not provide a token."
-                )
+        if self._access_token is None or self.is_token_expired:
+            if self._refresh_token is not None:
+                # Try to refresh first
+                try:
+                    self.refresh_access_token()
+                except Exception:
+                    # If refresh fails, do full authentication
+                    self.authenticate_client_credentials()
+            else:
+                # No refresh token, do full authentication
+                self.authenticate_client_credentials()
 
-        if self.is_token_expired:
-            self._generate_new_token()
-            if self._token is None:
-                raise Exception(
-                    "Failed to obtain a valid authentication token. Token refresh did not provide a token."
-                )
+        if self._access_token is None:
+            raise Exception("Failed to obtain a valid authentication token")
 
-        # At this point, we've done all we can to get a valid token
-        # If it's still None, raise an exception
-        if self._token is None:
-            raise Exception(
-                "Failed to obtain a valid authentication token. Check your credentials and try again."
-            )
-
-        return self._token
+        return self._access_token
 
     def request(
         self,
         method: str,
-        url: Union[str, httpx.URL],
+        url: str | httpx.URL,
         *,
-        headers: Optional[Dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
         **kwargs,
     ) -> httpx.Response:
         """Send an HTTP request with added functionality.
 
         Extends the base request method with:
-        - Adding authentication headers
-        - Adding correlation ID
         - Structured logging
 
         Args:
@@ -825,10 +903,6 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
         """
         # Initialize headers if None
         headers = headers or {}
-
-        # Add authentication headers
-        auth_headers = self.auth_strategy.headers()
-        headers.update(auth_headers)
 
         # Log the request with Logfire
         logfire.debug(
@@ -858,53 +932,17 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
             )
             raise
 
-    def _handle_authentication(
-        self, response: httpx.Response, **request_kwargs: RequestKwargs
-    ) -> httpx.Response:
-        """Handle authentication failures by refreshing token and retrying."""
-        if response.status_code != 401:
-            return response
-
-        self.authenticate_application()
-        if self._token is None:
-            raise Exception(
-                "Failed to obtain a valid authentication token. Authentication did not provide a token."
-            )
-
-        # Retry the request with the new token
-        headers = request_kwargs.get("headers", {})
-        headers.update({"Authorization": f"Bearer {self._token}"})
-        request_kwargs["headers"] = headers
-
-        return self.request(**request_kwargs)
-
-    def _process_response(
-        self, response: httpx.Response, cast_to: Optional[Type[T]] = None
-    ) -> Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-        """Process the response by validating status and converting to model.
-
-        Args:
-            response: The HTTP response.
-            cast_to: Optional Pydantic model class to parse response into.
-                     If None, returns the raw JSON data.
-
-        Returns:
-            Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-                Pydantic model instance(s) or raw JSON data.
-        """
-        return self._process_response_data(response, cast_to)
-
     def _make_request(
         self,
         method: str,
         path: str,
         *,
-        cast_to: Optional[Type[T]] = None,
-        params: Optional[Dict[str, Any]] = None,
-        json: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, str]] = None,
+        cast_to: type[T] | None = None,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
         **kwargs,
-    ) -> Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
+    ) -> T | list[T] | ResponseJson:
         """Core request method to handle HTTP requests with optional Pydantic model parsing.
 
         Args:
@@ -918,8 +956,7 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-                Pydantic model instance(s) or raw JSON data.
+            Union[T, List[T], ResponseJson]: Pydantic model instance(s) or raw JSON data.
         """
         # Check if path is a full URL when base_url is None
         if self._base_url is None and not path.startswith(("http://", "https://")):
@@ -934,51 +971,63 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
         # Get authentication token
         token = self._get_token()
 
-        # Create RequestKwargs with required fields
-        request_kwargs: RequestKwargs = {
-            "method": method,
-            "url": path,
-        }
-
-        # Add optional parameters if provided
-        if params is not None:
-            request_kwargs["params"] = params
-
-        if json is not None:
-            request_kwargs["json"] = json
-
         # Handle headers
         request_headers = headers or {}
         request_headers.update({"Authorization": f"Bearer {token}"})
-        request_kwargs["headers"] = request_headers
-
-        # Add any additional kwargs
-        for key, value in kwargs.items():
-            request_kwargs[key] = value
 
         # Make the request
         try:
-            response = self.request(**request_kwargs)
-        except httpx.UnsupportedProtocol:
+            response = self.request(
+                method, path, headers=request_headers, params=params, json=json, **kwargs
+            )
+        except httpx.UnsupportedProtocol as e:
             raise ValueError(
                 "Either base_url must be provided during initialization or path must be a full URL"
-            )
+            ) from e
 
         # Handle authentication failures
         if response.status_code == 401:
-            response = self._handle_authentication(response, **request_kwargs)
+            # Token might be expired, try to refresh and retry once
+            self.refresh_access_token()
+            request_headers.update({"Authorization": f"Bearer {self._access_token}"})
+            response = self.request(
+                method, path, headers=request_headers, params=params, json=json, **kwargs
+            )
 
         # Process the response
-        return self._process_response(response, cast_to)
+        return self._process_response_data(response, cast_to)
+
+    # HTTP method overloads for proper type inference
+    @overload
+    def get(
+        self,
+        path: str,
+        *,
+        cast_to: type[T],
+        params: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> T | list[T]:
+        ...
+
+    @overload
+    def get(
+        self,
+        path: str,
+        *,
+        cast_to: None = None,
+        params: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> ResponseJson:
+        ...
 
     def get(
         self,
         path: str,
         *,
-        cast_to: Optional[Type[T]] = None,
-        params: Optional[Dict[str, Any]] = None,
+        cast_to: type[T] | None = None,
+        params: dict[str, Any] | None = None,
         **kwargs,
-    ) -> Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
+    ) -> T | list[T] | ResponseJson:
         """Send a GET request.
 
         Args:
@@ -989,19 +1038,40 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-                Pydantic model instance(s) or raw JSON data.
+            Union[T, List[T], ResponseJson]: Pydantic model instance(s) or raw JSON data.
         """
         return self._make_request("GET", path, cast_to=cast_to, params=params, **kwargs)
+
+    @overload
+    def post(
+        self,
+        path: str,
+        *,
+        cast_to: type[T],
+        json: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> T | list[T]:
+        ...
+
+    @overload
+    def post(
+        self,
+        path: str,
+        *,
+        cast_to: None = None,
+        json: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> ResponseJson:
+        ...
 
     def post(
         self,
         path: str,
         *,
-        cast_to: Optional[Type[T]] = None,
-        json: Optional[Dict[str, Any]] = None,
+        cast_to: type[T] | None = None,
+        json: dict[str, Any] | None = None,
         **kwargs,
-    ) -> Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
+    ) -> T | list[T] | ResponseJson:
         """Send a POST request.
 
         Args:
@@ -1012,19 +1082,40 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-                Pydantic model instance(s) or raw JSON data.
+            Union[T, List[T], ResponseJson]: Pydantic model instance(s) or raw JSON data.
         """
         return self._make_request("POST", path, cast_to=cast_to, json=json, **kwargs)
+
+    @overload
+    def put(
+        self,
+        path: str,
+        *,
+        cast_to: type[T],
+        json: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> T | list[T]:
+        ...
+
+    @overload
+    def put(
+        self,
+        path: str,
+        *,
+        cast_to: None = None,
+        json: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> ResponseJson:
+        ...
 
     def put(
         self,
         path: str,
         *,
-        cast_to: Optional[Type[T]] = None,
-        json: Optional[Dict[str, Any]] = None,
+        cast_to: type[T] | None = None,
+        json: dict[str, Any] | None = None,
         **kwargs,
-    ) -> Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
+    ) -> T | list[T] | ResponseJson:
         """Send a PUT request.
 
         Args:
@@ -1035,19 +1126,40 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-                Pydantic model instance(s) or raw JSON data.
+            Union[T, List[T], ResponseJson]: Pydantic model instance(s) or raw JSON data.
         """
         return self._make_request("PUT", path, cast_to=cast_to, json=json, **kwargs)
+
+    @overload
+    def patch(
+        self,
+        path: str,
+        *,
+        cast_to: type[T],
+        json: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> T | list[T]:
+        ...
+
+    @overload
+    def patch(
+        self,
+        path: str,
+        *,
+        cast_to: None = None,
+        json: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> ResponseJson:
+        ...
 
     def patch(
         self,
         path: str,
         *,
-        cast_to: Optional[Type[T]] = None,
-        json: Optional[Dict[str, Any]] = None,
+        cast_to: type[T] | None = None,
+        json: dict[str, Any] | None = None,
         **kwargs,
-    ) -> Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
+    ) -> T | list[T] | ResponseJson:
         """Send a PATCH request.
 
         Args:
@@ -1058,19 +1170,40 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-                Pydantic model instance(s) or raw JSON data.
+            Union[T, List[T], ResponseJson]: Pydantic model instance(s) or raw JSON data.
         """
         return self._make_request("PATCH", path, cast_to=cast_to, json=json, **kwargs)
+
+    @overload
+    def delete(
+        self,
+        path: str,
+        *,
+        cast_to: type[T],
+        params: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> T | list[T]:
+        ...
+
+    @overload
+    def delete(
+        self,
+        path: str,
+        *,
+        cast_to: None = None,
+        params: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> ResponseJson:
+        ...
 
     def delete(
         self,
         path: str,
         *,
-        cast_to: Optional[Type[T]] = None,
-        params: Optional[Dict[str, Any]] = None,
+        cast_to: type[T] | None = None,
+        params: dict[str, Any] | None = None,
         **kwargs,
-    ) -> Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
+    ) -> T | list[T] | ResponseJson:
         """Send a DELETE request.
 
         Args:
@@ -1081,9 +1214,9 @@ class SpryxSyncClient(SpryxClientBase, httpx.Client):
             **kwargs: Additional arguments to pass to the request method.
 
         Returns:
-            Union[T, List[T], Dict[str, Any], List[Dict[str, Any]]]:
-                Pydantic model instance(s) or raw JSON data.
+            Union[T, List[T], ResponseJson]: Pydantic model instance(s) or raw JSON data.
         """
         return self._make_request(
             "DELETE", path, cast_to=cast_to, params=params, **kwargs
         )
+

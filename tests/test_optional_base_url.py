@@ -1,13 +1,18 @@
-import pytest
-import httpx
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from spryx_http.base import SpryxSyncClient, SpryxAsyncClient
+import pytest
+
+from spryx_http.base import SpryxAsyncClient, SpryxSyncClient
 
 
 def test_sync_client_with_none_base_url():
     """Test that SpryxSyncClient can be initialized with None base_url."""
-    client = SpryxSyncClient(base_url=None)
+    client = SpryxSyncClient(
+        base_url=None,
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        token_url="https://auth.example.com/token",
+    )
     # httpx converts None to an empty URL
     assert str(client._base_url) == ""
 
@@ -23,14 +28,14 @@ def test_sync_client_with_none_base_url():
             mock_response.status_code = 200
             mock_response.json.return_value = {"data": {"test": "value"}}
             mock_request.return_value = mock_response
-            
+
             result = client._make_request("GET", "https://example.com/api/endpoint")
-            
+
             # Verify request was called with the full URL
             mock_request.assert_called_once()
-            # Check the URL in the kwargs
-            assert mock_request.call_args.kwargs["url"] == "https://example.com/api/endpoint"
-            
+            # Check the URL as positional argument
+            assert mock_request.call_args.args[1] == "https://example.com/api/endpoint"
+
             # Verify result
             assert result == {"test": "value"}
 
@@ -38,7 +43,12 @@ def test_sync_client_with_none_base_url():
 @pytest.mark.asyncio
 async def test_async_client_with_none_base_url():
     """Test that SpryxAsyncClient can be initialized with None base_url."""
-    client = SpryxAsyncClient(base_url=None)
+    client = SpryxAsyncClient(
+        base_url=None,
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        token_url="https://auth.example.com/token",
+    )
     # httpx converts None to an empty URL
     assert str(client._base_url) == ""
 
@@ -54,13 +64,13 @@ async def test_async_client_with_none_base_url():
             mock_response.status_code = 200
             mock_response.json.return_value = {"data": {"test": "value"}}
             mock_request.return_value = mock_response
-            
+
             result = await client._make_request("GET", "https://example.com/api/endpoint")
-            
+
             # Verify request was called with the full URL
             mock_request.assert_called_once()
-            # Check the URL in the kwargs
-            assert mock_request.call_args.kwargs["url"] == "https://example.com/api/endpoint"
-            
+            # Check the URL as positional argument
+            assert mock_request.call_args.args[1] == "https://example.com/api/endpoint"
+
             # Verify result
-            assert result == {"test": "value"} 
+            assert result == {"test": "value"}

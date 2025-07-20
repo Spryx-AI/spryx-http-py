@@ -19,16 +19,12 @@ def test_package_modules():
     """Test that the core modules exist."""
     module_files = [
         "base.py",
-        "auth.py",
-        "pagination.py",
         "exceptions.py",
         "retry.py",
         "settings.py",
     ]
     for module in module_files:
-        assert os.path.isfile(
-            f"spryx_http/{module}"
-        ), f"Module file {module} should exist"
+        assert os.path.isfile(f"spryx_http/{module}"), f"Module file {module} should exist"
 
 
 class TestSpryxAsyncClient:
@@ -37,24 +33,26 @@ class TestSpryxAsyncClient:
         """Test that SpryxAsyncClient can be initialized properly."""
         client = SpryxAsyncClient(
             base_url="https://api.example.com",
-            application_id="test_app",
-            application_secret="test_secret",
-            iam_base_url="https://iam.example.com",
+            client_id="test_client_id",
+            client_secret="test_client_secret",
+            token_url="https://auth.example.com/token",
+            scope="read write",
         )
 
         assert client._base_url == "https://api.example.com"
-        assert client._application_id == "test_app"
-        assert client._application_secret == "test_secret"
-        assert client._iam_base_url == "https://iam.example.com"
+        assert client._client_id == "test_client_id"
+        assert client._client_secret == "test_client_secret"
+        assert client._token_url == "https://auth.example.com/token"
+        assert client._scope == "read write"
 
     @pytest.mark.asyncio
     async def test_async_token_expiration_check(self):
         """Test token expiration validation."""
         client = SpryxAsyncClient(
             base_url="https://api.example.com",
-            application_id="test_app",
-            application_secret="test_secret",
-            iam_base_url="https://iam.example.com",
+            client_id="test_client_id",
+            client_secret="test_client_secret",
+            token_url="https://auth.example.com/token",
         )
 
         # Initially token should be expired (None)
@@ -63,7 +61,7 @@ class TestSpryxAsyncClient:
         # Set a token with future expiration
         import time
 
-        client._token = "test_token"
+        client._access_token = "test_token"
         client._token_expires_at = int(time.time()) + 3600  # 1 hour from now
 
         assert client.is_token_expired is False
@@ -74,23 +72,23 @@ class TestSpryxSyncClient:
         """Test that SpryxSyncClient can be initialized properly."""
         client = SpryxSyncClient(
             base_url="https://api.example.com",
-            application_id="test_app",
-            application_secret="test_secret",
-            iam_base_url="https://iam.example.com",
+            client_id="test_client_id",
+            client_secret="test_client_secret",
+            token_url="https://auth.example.com/token",
         )
 
         assert client._base_url == "https://api.example.com"
-        assert client._application_id == "test_app"
-        assert client._application_secret == "test_secret"
-        assert client._iam_base_url == "https://iam.example.com"
+        assert client._client_id == "test_client_id"
+        assert client._client_secret == "test_client_secret"
+        assert client._token_url == "https://auth.example.com/token"
 
     def test_sync_token_expiration_check(self):
         """Test token expiration validation."""
         client = SpryxSyncClient(
             base_url="https://api.example.com",
-            application_id="test_app",
-            application_secret="test_secret",
-            iam_base_url="https://iam.example.com",
+            client_id="test_client_id",
+            client_secret="test_client_secret",
+            token_url="https://auth.example.com/token",
         )
 
         # Initially token should be expired (None)
@@ -99,7 +97,7 @@ class TestSpryxSyncClient:
         # Set a token with future expiration
         import time
 
-        client._token = "test_token"
+        client._access_token = "test_token"
         client._token_expires_at = int(time.time()) + 3600  # 1 hour from now
 
         assert client.is_token_expired is False
@@ -108,9 +106,9 @@ class TestSpryxSyncClient:
         """Test that SpryxSyncClient has all expected methods."""
         client = SpryxSyncClient(
             base_url="https://api.example.com",
-            application_id="test_app",
-            application_secret="test_secret",
-            iam_base_url="https://iam.example.com",
+            client_id="test_client_id",
+            client_secret="test_client_secret",
+            token_url="https://auth.example.com/token",
         )
 
         # Test that sync client has all HTTP methods
@@ -139,16 +137,16 @@ class TestSharedFunctionality:
 
         async_client = SpryxAsyncClient(
             base_url="https://api.example.com",
-            application_id="test_app",
-            application_secret="test_secret",
-            iam_base_url="https://iam.example.com",
+            client_id="test_client_id",
+            client_secret="test_client_secret",
+            token_url="https://auth.example.com/token",
         )
 
         sync_client = SpryxSyncClient(
             base_url="https://api.example.com",
-            application_id="test_app",
-            application_secret="test_secret",
-            iam_base_url="https://iam.example.com",
+            client_id="test_client_id",
+            client_secret="test_client_secret",
+            token_url="https://auth.example.com/token",
         )
 
         # Both should inherit from SpryxClientBase
@@ -158,8 +156,6 @@ class TestSharedFunctionality:
         # Both should have same properties
         assert hasattr(async_client, "is_token_expired")
         assert hasattr(sync_client, "is_token_expired")
-        assert hasattr(async_client, "is_refresh_token_expired")
-        assert hasattr(sync_client, "is_refresh_token_expired")
 
         # Both should have same data processing methods
         assert hasattr(async_client, "_extract_data_from_response")

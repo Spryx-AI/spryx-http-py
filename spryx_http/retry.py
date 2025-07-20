@@ -1,6 +1,40 @@
+"""HTTP retry transport with exponential backoff for httpx clients.
+
+This module provides automatic retry functionality for HTTP requests using exponential
+backoff with jitter. It wraps httpx transports to add resilience against transient
+failures commonly encountered in distributed systems.
+
+Key Features:
+- Exponential backoff with randomized jitter
+- Configurable retry limits and backoff factors
+- Smart retry logic (only idempotent methods and specific status codes)
+- Support for both async and sync httpx clients
+- Comprehensive logging of retry attempts
+
+Retry Strategy:
+- Status Codes: Only retries on 429 (rate limit) and 5xx server errors (502, 503, 504)
+- HTTP Methods: Only retries idempotent methods (GET, HEAD, PUT, DELETE, OPTIONS, TRACE)
+- Network Errors: Retries on connection, read, and write errors
+- Backoff Formula: delay = backoff_factor * (2 ** (retry_number - 1)) * jitter_multiplier
+
+Configuration:
+Set environment variables to customize retry behavior:
+- HTTP_RETRIES: Maximum retry attempts (default: 3)
+- HTTP_BACKOFF_FACTOR: Base backoff multiplier (default: 0.5)
+
+Example:
+    # Basic usage with default settings
+    transport = build_retry_transport(is_async=True)
+    client = httpx.AsyncClient(transport=transport)
+
+    # Custom retry configuration
+    from spryx_http.settings import HttpClientSettings
+    settings = HttpClientSettings(retries=5, backoff_factor=1.0)
+    transport = build_retry_transport(settings=settings, is_async=False)
+    client = httpx.Client(transport=transport)
+"""
 import asyncio
 import random
-from typing import Optional, Set, Union
 
 import httpx
 import logfire
@@ -17,12 +51,12 @@ class AsyncRetryTransport(httpx.AsyncBaseTransport):
 
     def __init__(
         self,
-        transport: Optional[httpx.AsyncBaseTransport] = None,
+        transport: httpx.AsyncBaseTransport | None = None,
         *,
         max_retries: int = 3,
         backoff_factor: float = 0.5,
-        status_codes: Optional[Set[int]] = None,
-        methods: Optional[Set[str]] = None,
+        status_codes: set[int] | None = None,
+        methods: set[str] | None = None,
         jitter: bool = True,
     ):
         """Initialize async retry transport.
@@ -67,7 +101,7 @@ class AsyncRetryTransport(httpx.AsyncBaseTransport):
         if method not in self.methods:
             return await self.transport.handle_async_request(request)
 
-        last_exception: Optional[Exception] = None
+        last_exception: Exception | None = None
 
         while retries_left > 0:
             try:
@@ -151,12 +185,12 @@ class SyncRetryTransport(httpx.BaseTransport):
 
     def __init__(
         self,
-        transport: Optional[httpx.BaseTransport] = None,
+        transport: httpx.BaseTransport | None = None,
         *,
         max_retries: int = 3,
         backoff_factor: float = 0.5,
-        status_codes: Optional[Set[int]] = None,
-        methods: Optional[Set[str]] = None,
+        status_codes: set[int] | None = None,
+        methods: set[str] | None = None,
         jitter: bool = True,
     ):
         """Initialize sync retry transport.
@@ -203,7 +237,7 @@ class SyncRetryTransport(httpx.BaseTransport):
         if method not in self.methods:
             return self.transport.handle_request(request)
 
-        last_exception: Optional[Exception] = None
+        last_exception: Exception | None = None
 
         while retries_left > 0:
             try:
@@ -283,32 +317,62 @@ RetryTransport = AsyncRetryTransport
 
 
 def build_retry_transport(
-    transport: Optional[Union[httpx.BaseTransport, httpx.AsyncBaseTransport]] = None,
-    settings: Optional[HttpClientSettings] = None,
+    transport: httpx.BaseTransport | httpx.AsyncBaseTransport | None = None,
+    settings: HttpClientSettings | None = None,
     *,
     is_async: bool = True,
-) -> Union[AsyncRetryTransport, SyncRetryTransport]:
-    """Build a retry transport for httpx client.
+) -> AsyncRetryTransport | SyncRetryTransport:
+    """Build a retry transport for httpx client with exponential backoff.
+
+    Creates a transport wrapper that automatically retries failed requests using
+    exponential backoff with jitter. This is the main entry point for configuring
+    retry behavior in Spryx HTTP clients.
+
+    Retry Strategy:
+    - Only retries on specific status codes: 429 (rate limit), 502/503/504 (server errors)
+    - Only retries idempotent HTTP methods: GET, HEAD, PUT, DELETE, OPTIONS, TRACE
+    - Uses exponential backoff: delay = backoff_factor * (2 ** (retry_number - 1))
+    - Adds random jitter to prevent thundering herd effect
+    - Retries on network errors: connection, read, write failures
+
+    Configuration via Environment Variables:
+    - HTTP_RETRIES: Maximum retry attempts (default: 3)
+    - HTTP_BACKOFF_FACTOR: Base backoff multiplier (default: 0.5)
+
+    Example Usage:
+        # Async client with custom transport
+        transport = build_retry_transport(is_async=True)
+        client = httpx.AsyncClient(transport=transport)
+
+        # Sync client with default settings
+        transport = build_retry_transport(is_async=False)
+        client = httpx.Client(transport=transport)
 
     Args:
         transport: Base transport to wrap with retry logic.
-        settings: HTTP client settings.
+                  If None, creates a default HTTP transport.
+        settings: HTTP client settings containing retry configuration.
+                 If None, loads settings from environment variables.
         is_async: Whether to build an async or sync transport.
+                 True for AsyncRetryTransport, False for SyncRetryTransport.
 
     Returns:
-        Union[AsyncRetryTransport, SyncRetryTransport]: Configured retry transport.
+        Union[AsyncRetryTransport, SyncRetryTransport]: Configured retry transport
+        that wraps the base transport with exponential backoff retry logic.
     """
     settings = settings or get_http_settings()
 
     if is_async:
+        async_transport = transport if isinstance(transport, httpx.AsyncBaseTransport) else None
         return AsyncRetryTransport(
-            transport=transport,
+            transport=async_transport,
             max_retries=settings.retries,
             backoff_factor=settings.backoff_factor,
         )
     else:
+        sync_transport = transport if isinstance(transport, httpx.BaseTransport) else None
         return SyncRetryTransport(
-            transport=transport,
+            transport=sync_transport,
             max_retries=settings.retries,
             backoff_factor=settings.backoff_factor,
         )
