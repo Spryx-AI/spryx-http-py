@@ -8,8 +8,8 @@ import httpx
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from spryx_http.base import SpryxClientBase
 from spryx_http.auth_strategies import ClientCredentialsAuthStrategy
+from spryx_http.base import SpryxClientBase
 from spryx_http.exceptions import (
     AuthenticationError,
     AuthorizationError,

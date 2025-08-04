@@ -143,53 +143,34 @@ class ClientCredentialsAuthStrategy(AbstractAuthStrategy):
 @dataclass
 class ApiKeyAuthStrategy(AbstractAuthStrategy):
     api_key: str
-    token_url: str
     type: Literal["api_key"] = "api_key"
 
-    # Internal token storage
-    _access_token: str | None = field(default=None, init=False, repr=False)
+    async def authenticate_async(self, _client: httpx.AsyncClient) -> dict[str, Any]:
+        """API Key authentication - no actual authentication needed."""
+        # API key is used directly, no token endpoint needed
+        return {"access_token": self.api_key}
 
-    async def authenticate_async(self, client: httpx.AsyncClient) -> dict[str, Any]:
-        """Authenticate using API Key."""
-        payload = {
-            "grant_type": "api_key",
-            "api_key": self.api_key,
-        }
-
-        response = await client.request("POST", self.token_url, json=payload)
-        response.raise_for_status()
-        return response.json()
-
-    def authenticate_sync(self, client: httpx.Client) -> dict[str, Any]:
-        """Authenticate using API Key."""
-        payload = {
-            "grant_type": "api_key",
-            "api_key": self.api_key,
-        }
-
-        response = client.request("POST", self.token_url, json=payload)
-        response.raise_for_status()
-        return response.json()
+    def authenticate_sync(self, _client: httpx.Client) -> dict[str, Any]:
+        """API Key authentication - no actual authentication needed."""
+        # API key is used directly, no token endpoint needed
+        return {"access_token": self.api_key}
 
     def get_auth_headers(self) -> dict[str, str]:
         """Get API Key auth headers."""
-        if not self._access_token:
-            raise ValueError("No access token available. Call authenticate first.")
-        return {"Authorization": f"Bearer {self._access_token}"}
+        return {"Authorization": f"Bearer {self.api_key}"}
 
     def needs_refresh(self) -> bool:
-        """API Keys don't expire, only need auth if no token."""
-        return self._access_token is None
+        """API Keys don't expire and don't need refresh."""
+        return False
 
     def supports_refresh(self) -> bool:
         """API Keys don't support refresh."""
         return False
 
-    def store_token_response(self, response: dict[str, Any]) -> None:
-        """Store API Key token response."""
-        # For API Key, we just need the access token
-        token_data = OAuthTokenResponse.model_validate(response)
-        self._access_token = token_data.access_token
+    def store_token_response(self, _response: dict[str, Any]) -> None:
+        """Store API Key token response - no-op since API key is used directly."""
+        # API key is used directly, no need to store anything
+        pass
 
 
 AuthStrategy = Annotated[ClientCredentialsAuthStrategy | ApiKeyAuthStrategy, pydantic.Field(discriminator="type")]

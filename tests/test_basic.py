@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from spryx_http import SpryxAsyncClient, SpryxSyncClient, ClientCredentialsAuthStrategy
+from spryx_http import ClientCredentialsAuthStrategy, SpryxAsyncClient, SpryxSyncClient
 
 
 def test_package_structure():
@@ -36,7 +36,7 @@ class TestSpryxAsyncClient:
             client_secret="test_client_secret",
             token_url="https://auth.example.com/token"
         )
-        
+
         client = SpryxAsyncClient(
             base_url="https://api.example.com",
             auth_strategy=auth_strategy
@@ -56,7 +56,7 @@ class TestSpryxAsyncClient:
             client_secret="test_client_secret",
             token_url="https://auth.example.com/token"
         )
-        
+
         client = SpryxAsyncClient(
             base_url="https://api.example.com",
             auth_strategy=auth_strategy
@@ -82,7 +82,7 @@ class TestSpryxSyncClient:
             client_secret="test_client_secret",
             token_url="https://auth.example.com/token"
         )
-        
+
         client = SpryxSyncClient(
             base_url="https://api.example.com",
             auth_strategy=auth_strategy
@@ -101,7 +101,7 @@ class TestSpryxSyncClient:
             client_secret="test_client_secret",
             token_url="https://auth.example.com/token"
         )
-        
+
         client = SpryxSyncClient(
             base_url="https://api.example.com",
             auth_strategy=auth_strategy
@@ -125,7 +125,7 @@ class TestSpryxSyncClient:
             client_secret="test_client_secret",
             token_url="https://auth.example.com/token"
         )
-        
+
         client = SpryxSyncClient(
             base_url="https://api.example.com",
             auth_strategy=auth_strategy
@@ -160,7 +160,7 @@ class TestSharedFunctionality:
             client_secret="test_client_secret",
             token_url="https://auth.example.com/token"
         )
-        
+
         async_client = SpryxAsyncClient(
             base_url="https://api.example.com",
             auth_strategy=auth_strategy

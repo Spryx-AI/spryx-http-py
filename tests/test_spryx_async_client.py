@@ -3,9 +3,8 @@ Updated tests for SpryxAsyncClient with new auth strategy architecture.
 """
 
 import time
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
-import httpx
 import pytest
 from pydantic import BaseModel
 
@@ -40,7 +39,7 @@ class TestSpryxAsyncClientBasic:
             base_url="https://api.test.com",
             auth_strategy=auth_strategy
         )
-        
+
         assert client._base_url == "https://api.test.com"
         assert client._auth_strategy == auth_strategy
 
@@ -52,7 +51,7 @@ class TestSpryxAsyncClientBasic:
             auth_strategy=auth_strategy,
             settings=settings
         )
-        
+
         assert client.settings == settings
 
     @pytest.mark.asyncio
@@ -62,7 +61,7 @@ class TestSpryxAsyncClientBasic:
             base_url="https://api.test.com",
             auth_strategy=auth_strategy
         )
-        
+
         # Mock the request method
         with patch.object(client, 'request') as mock_request:
             # Mock auth response
@@ -73,12 +72,12 @@ class TestSpryxAsyncClientBasic:
                 "refresh_token": "test_refresh",
                 "expires_in": 3600
             }
-            
+
             mock_request.return_value = auth_response
-            
+
             # Call authenticate
             await client.authenticate()
-            
+
             # Verify auth request was made
             mock_request.assert_called_once_with(
                 "POST",
@@ -89,7 +88,7 @@ class TestSpryxAsyncClientBasic:
                     "client_secret": "test_client_secret"
                 }
             )
-            
+
             # Verify token was stored
             assert auth_strategy._access_token == "test_token"
             assert auth_strategy._refresh_token == "test_refresh"
@@ -100,24 +99,24 @@ class TestSpryxAsyncClientBasic:
         # Pre-authenticate
         auth_strategy._access_token = "test_token"
         auth_strategy._token_expires_at = int(time.time()) + 3600
-        
+
         client = SpryxAsyncClient(
             base_url="https://api.test.com",
             auth_strategy=auth_strategy
         )
-        
+
         with patch.object(client, 'request') as mock_request:
             # Mock API response
             api_response = Mock()
             api_response.status_code = 200
             api_response.headers = {"content-type": "application/json"}
             api_response.json.return_value = {"id": 1, "name": "test", "email": "test@example.com"}
-            
+
             mock_request.return_value = api_response
-            
+
             # Make API call
             result = await client.get("/users/1")
-            
+
             # Verify request was made with auth headers
             mock_request.assert_called_once_with(
                 "GET",
@@ -126,7 +125,7 @@ class TestSpryxAsyncClientBasic:
                 params=None,
                 json=None
             )
-            
+
             # Verify result
             assert result == {"id": 1, "name": "test", "email": "test@example.com"}
 
@@ -137,17 +136,17 @@ class TestSpryxAsyncClientBasic:
         auth_strategy._access_token = "expired_token"
         auth_strategy._refresh_token = "refresh_token"
         auth_strategy._token_expires_at = int(time.time()) - 100
-        
+
         client = SpryxAsyncClient(
             base_url="https://api.test.com",
             auth_strategy=auth_strategy
         )
-        
+
         with patch.object(client, 'request') as mock_request:
             # First call returns 401
             unauthorized_response = Mock()
             unauthorized_response.status_code = 401
-            
+
             # Refresh call returns new token
             refresh_response = Mock()
             refresh_response.raise_for_status.return_value = None
@@ -156,25 +155,25 @@ class TestSpryxAsyncClientBasic:
                 "refresh_token": "new_refresh",
                 "expires_in": 3600
             }
-            
+
             # Retry call succeeds
             success_response = Mock()
             success_response.status_code = 200
             success_response.headers = {"content-type": "application/json"}
             success_response.json.return_value = {"success": True}
-            
+
             mock_request.side_effect = [
                 unauthorized_response,  # Initial request fails
                 refresh_response,       # Refresh succeeds
                 success_response        # Retry succeeds
             ]
-            
+
             # Make API call
             result = await client.get("/users")
-            
+
             # Verify refresh was called
             assert mock_request.call_count == 3
-            
+
             # Verify new token was stored
             assert auth_strategy._access_token == "new_token"
             assert result == {"success": True}
@@ -185,12 +184,12 @@ class TestSpryxAsyncClientBasic:
         # Pre-authenticate
         auth_strategy._access_token = "test_token"
         auth_strategy._token_expires_at = int(time.time()) + 3600
-        
+
         client = SpryxAsyncClient(
             base_url="https://api.test.com",
             auth_strategy=auth_strategy
         )
-        
+
         with patch.object(client, 'request') as mock_request:
             # Mock successful response
             success_response = Mock()
@@ -198,14 +197,14 @@ class TestSpryxAsyncClientBasic:
             success_response.headers = {"content-type": "application/json"}
             success_response.json.return_value = {"success": True}
             mock_request.return_value = success_response
-            
+
             # Test all HTTP methods
             await client.get("/test")
             await client.post("/test", json={"data": "test"})
             await client.put("/test", json={"data": "test"})
             await client.patch("/test", json={"data": "test"})
             await client.delete("/test")
-            
+
             # Verify all calls were made
             assert mock_request.call_count == 5
 
@@ -215,24 +214,24 @@ class TestSpryxAsyncClientBasic:
         # Pre-authenticate
         auth_strategy._access_token = "test_token"
         auth_strategy._token_expires_at = int(time.time()) + 3600
-        
+
         client = SpryxAsyncClient(
             base_url="https://api.test.com",
             auth_strategy=auth_strategy
         )
-        
+
         with patch.object(client, 'request') as mock_request:
             # Mock API response
             api_response = Mock()
             api_response.status_code = 200
             api_response.headers = {"content-type": "application/json"}
             api_response.json.return_value = {"id": 1, "name": "John", "email": "john@example.com"}
-            
+
             mock_request.return_value = api_response
-            
+
             # Make API call with model casting
             result = await client.get("/users/1", cast_to=UserModel)
-            
+
             # Verify result is a UserModel instance
             assert isinstance(result, UserModel)
             assert result.id == 1

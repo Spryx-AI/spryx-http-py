@@ -253,103 +253,74 @@ class TestApiKeyAuthStrategy:
 
     def test_init(self):
         """Test strategy initialization."""
-        strategy = ApiKeyAuthStrategy(api_key="test-api-key", token_url="https://auth.example.com/api/token")
+        strategy = ApiKeyAuthStrategy(api_key="test-api-key")
 
         assert strategy.api_key == "test-api-key"
-        assert strategy.token_url == "https://auth.example.com/api/token"
         assert strategy.type == "api_key"
-        assert strategy._access_token is None
 
     def test_supports_refresh(self):
         """Test that ApiKey doesn't support refresh."""
-        strategy = ApiKeyAuthStrategy(api_key="test-api-key", token_url="https://auth.example.com/api/token")
+        strategy = ApiKeyAuthStrategy(api_key="test-api-key")
 
         assert strategy.supports_refresh() is False
 
-    def test_needs_refresh_no_token(self):
-        """Test needs_refresh when no token exists."""
-        strategy = ApiKeyAuthStrategy(api_key="test-api-key", token_url="https://auth.example.com/api/token")
-
-        assert strategy.needs_refresh() is True
-
-    def test_needs_refresh_with_token(self):
-        """Test needs_refresh when token exists (API keys don't expire)."""
-        strategy = ApiKeyAuthStrategy(api_key="test-api-key", token_url="https://auth.example.com/api/token")
-
-        strategy._access_token = "test-access-token"
+    def test_needs_refresh(self):
+        """Test needs_refresh for API key (always false)."""
+        strategy = ApiKeyAuthStrategy(api_key="test-api-key")
 
         assert strategy.needs_refresh() is False
 
+
     @pytest.mark.asyncio
     async def test_authenticate_async_success(self):
-        """Test successful async authentication."""
-        strategy = ApiKeyAuthStrategy(api_key="test-api-key", token_url="https://auth.example.com/api/token")
+        """Test async authentication returns API key directly."""
+        strategy = ApiKeyAuthStrategy(api_key="test-api-key")
 
-        # Mock client
+        # Mock client (should not be used)
         mock_client = AsyncMock()
-        mock_response = Mock()
-        mock_response.raise_for_status.return_value = None
-        mock_response.json.return_value = {"access_token": "test-access-token", "expires_in": 3600}
-        mock_client.request.return_value = mock_response
 
         # Call authenticate
         result = await strategy.authenticate_async(mock_client)
 
-        # Verify request was made correctly
-        mock_client.request.assert_called_once_with(
-            "POST", "https://auth.example.com/api/token", json={"grant_type": "api_key", "api_key": "test-api-key"}
-        )
+        # Verify no request was made
+        mock_client.request.assert_not_called()
 
-        # Verify response
-        assert result == {"access_token": "test-access-token", "expires_in": 3600}
+        # Verify response contains the API key as access token
+        assert result == {"access_token": "test-api-key"}
 
     def test_authenticate_sync_success(self):
-        """Test successful sync authentication."""
-        strategy = ApiKeyAuthStrategy(api_key="test-api-key", token_url="https://auth.example.com/api/token")
+        """Test sync authentication returns API key directly."""
+        strategy = ApiKeyAuthStrategy(api_key="test-api-key")
 
-        # Mock client
+        # Mock client (should not be used)
         mock_client = Mock()
-        mock_response = Mock()
-        mock_response.raise_for_status.return_value = None
-        mock_response.json.return_value = {"access_token": "test-access-token", "expires_in": 3600}
-        mock_client.request.return_value = mock_response
 
         # Call authenticate
         result = strategy.authenticate_sync(mock_client)
 
-        # Verify request was made correctly
-        mock_client.request.assert_called_once_with(
-            "POST", "https://auth.example.com/api/token", json={"grant_type": "api_key", "api_key": "test-api-key"}
-        )
+        # Verify no request was made
+        mock_client.request.assert_not_called()
 
-        # Verify response
-        assert result == {"access_token": "test-access-token", "expires_in": 3600}
+        # Verify response contains the API key as access token
+        assert result == {"access_token": "test-api-key"}
 
     def test_store_token_response(self):
-        """Test storing token response."""
-        strategy = ApiKeyAuthStrategy(api_key="test-api-key", token_url="https://auth.example.com/api/token")
+        """Test storing token response (no-op for API key)."""
+        strategy = ApiKeyAuthStrategy(api_key="test-api-key")
 
         token_response = {"access_token": "test-access-token", "expires_in": 3600}
 
-        # Store token response
+        # Store token response (should be a no-op)
         strategy.store_token_response(token_response)
 
-        # Verify access token was stored
-        assert strategy._access_token == "test-access-token"
+        # Verify nothing was stored (API key is used directly)
+        # No internal state should be modified
 
     def test_get_auth_headers_success(self):
-        """Test getting auth headers with valid token."""
-        strategy = ApiKeyAuthStrategy(api_key="test-api-key", token_url="https://auth.example.com/api/token")
-
-        strategy._access_token = "test-access-token"
+        """Test getting auth headers uses API key directly."""
+        strategy = ApiKeyAuthStrategy(api_key="test-api-key")
 
         headers = strategy.get_auth_headers()
 
-        assert headers == {"Authorization": "Bearer test-access-token"}
+        assert headers == {"Authorization": "Bearer test-api-key"}
 
-    def test_get_auth_headers_no_token(self):
-        """Test getting auth headers without token."""
-        strategy = ApiKeyAuthStrategy(api_key="test-api-key", token_url="https://auth.example.com/api/token")
-
-        with pytest.raises(ValueError, match="No access token available"):
-            strategy.get_auth_headers()
