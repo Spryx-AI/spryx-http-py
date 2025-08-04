@@ -1,10 +1,10 @@
-import time
 from typing import Any, TypeVar, cast
 
 import httpx
 from pydantic import BaseModel
 from spryx_core import NotGiven
 
+from spryx_http.auth_strategies import AuthStrategy
 from spryx_http.exceptions import (
     AuthenticationError,
     AuthorizationError,
@@ -17,7 +17,6 @@ from spryx_http.exceptions import (
 )
 from spryx_http.retry import build_retry_transport
 from spryx_http.settings import HttpClientSettings, get_http_settings
-from spryx_http.types import OAuthTokenResponse
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -26,23 +25,16 @@ class SpryxClientBase:
     """Base class for Spryx HTTP clients with common functionality.
 
     Contains shared functionality between async and sync clients:
-    - OAuth 2.0 M2M authentication with refresh token support
-    - Token management and validation
+    - Authentication strategy pattern support
     - Response data processing
     - Settings management
     """
-
-    _access_token: str | None = None
-    _token_expires_at: int | None = None
-    _refresh_token: str | None = None
 
     def __init__(
         self,
         *,
         base_url: str | None = None,
-        client_id: str | None = None,
-        client_secret: str | None = None,
-        token_url: str,
+        auth_strategy: AuthStrategy,
         settings: HttpClientSettings | None = None,
         **kwargs,
     ):
@@ -50,16 +42,12 @@ class SpryxClientBase:
 
         Args:
             base_url: Base URL for all API requests. Can be None.
-            client_id: OAuth 2.0 client ID for M2M authentication.
-            client_secret: OAuth 2.0 client secret for M2M authentication.
-            token_url: OAuth 2.0 token endpoint URL.
+            auth_strategy: Authentication strategy to use (ClientCredentials or ApiKey).
             settings: HTTP client settings.
             **kwargs: Additional arguments to pass to httpx client.
         """
         self._base_url = base_url
-        self._client_id = client_id
-        self._client_secret = client_secret
-        self._token_url = token_url
+        self._auth_strategy = auth_strategy
         self.settings = settings or get_http_settings()
 
         # Configure timeout if not provided
@@ -78,53 +66,6 @@ class SpryxClientBase:
         if "transport" not in kwargs:
             kwargs["transport"] = build_retry_transport(settings=self.settings, is_async=True)
         return kwargs
-
-    @property
-    def is_token_expired(self) -> bool:
-        """Check if the access token is expired.
-
-        Returns:
-            bool: True if the token is expired or not set, False otherwise.
-        """
-        if self._access_token is None or self._token_expires_at is None:
-            return True
-
-        # Add 30 seconds buffer to account for request time
-        current_time = int(time.time()) + 30
-        return current_time >= self._token_expires_at
-
-    def _store_token_data(self, oauth_token_response: OAuthTokenResponse) -> str:
-        """Store token data and parse expiration time.
-
-        This method is responsible for:
-        - Validating the OAuth token response format
-        - Extracting and storing the access token
-        - Extracting and storing the refresh token (if present)
-        - Calculating expiration timestamp from expires_in
-
-        Args:
-            token_data: OAuth token response from server, either as dict or parsed model.
-                       Must contain 'access_token' and optionally 'refresh_token'.
-
-        Returns:
-            str: The access token.
-
-        Raises:
-            ValueError: If access_token is missing or validation fails.
-            ValidationError: If token_data doesn't match expected OAuth format.
-        """
-        # Store tokens
-        self._access_token = oauth_token_response.access_token
-        self._refresh_token = oauth_token_response.refresh_token
-
-        # Calculate expiration time from expires_in
-        self._token_expires_at = int(time.time()) + oauth_token_response.expires_in
-
-        # Validate we have a valid access token
-        if not self._access_token:
-            raise ValueError("Failed to obtain access token")
-
-        return self._access_token
 
     def _extract_data_from_response(self, response_json: ResponseJson | None) -> Any:
         """Extract data from standardized API response.

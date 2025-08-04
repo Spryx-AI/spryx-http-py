@@ -9,10 +9,11 @@ from typing import Any, TypeVar, overload
 import httpx
 from pydantic import BaseModel
 
+from spryx_http.auth_strategies import AuthStrategy, ClientCredentialsAuthStrategy
+
 from .base import ResponseJson, SpryxClientBase
 from .logger import logger
 from .settings import HttpClientSettings
-from .types import OAuthTokenResponse
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -30,9 +31,7 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         self,
         *,
         base_url: str | None = None,
-        client_id: str | None = None,
-        client_secret: str | None = None,
-        token_url: str,
+        auth_strategy: AuthStrategy,
         settings: HttpClientSettings | None = None,
         **kwargs,
     ):
@@ -50,9 +49,7 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         SpryxClientBase.__init__(
             self,
             base_url=base_url,
-            client_id=client_id,
-            client_secret=client_secret,
-            token_url=token_url,
+            auth_strategy=auth_strategy,
             settings=settings,
             **kwargs,
         )
@@ -63,107 +60,70 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         httpx_base_url = "" if self._base_url is None else self._base_url
         httpx.AsyncClient.__init__(self, base_url=httpx_base_url, **transport_kwargs)
 
-    async def authenticate_client_credentials(self) -> str:
-        """Authenticate using OAuth 2.0 Client Credentials flow.
+    async def authenticate(self) -> None:
+        """Authenticate using the configured authentication strategy.
 
-        Uses the client_id and client_secret provided during initialization
-        to authenticate with the OAuth 2.0 token endpoint and obtain access and refresh tokens.
-
-        Returns:
-            str: The access token.
+        Uses the authentication strategy provided during initialization
+        to authenticate and obtain access tokens.
 
         Raises:
-            ValueError: If client_id or client_secret is not provided.
             httpx.HTTPStatusError: If the token request fails.
         """
-        logger.debug("Authenticating using OAuth 2.0 Client Credentials flow")
+        logger.debug(f"Authenticating using {type(self._auth_strategy).__name__}")
 
-        if self._client_id is None:
-            raise ValueError("client_id is required for OAuth 2.0 authentication")
+        # Delegate authentication to the strategy
+        token_data = await self._auth_strategy.authenticate_async(self)
+        self._auth_strategy.store_token_response(token_data)
 
-        if self._client_secret is None:
-            raise ValueError("client_secret is required for OAuth 2.0 authentication")
+        logger.debug(f"Successfully authenticated using {type(self._auth_strategy).__name__}")
 
-        payload = {
-            "grant_type": "client_credentials",
-            "client_id": self._client_id,
-            "client_secret": self._client_secret,
-        }
-
-        # Use direct HTTP request to avoid authentication loop
-        response = await self.request("POST", self._token_url, json=payload)
-        response.raise_for_status()
-
-        token_data = response.json()
-        oauth_token_response = OAuthTokenResponse.model_validate(token_data)
-
-        logger.debug("Successfully authenticated using OAuth 2.0 Client Credentials flow")
-        return self._store_token_data(oauth_token_response)
-
-    async def refresh_access_token(self) -> str:
-        """Refresh the access token using the refresh token.
+    async def refresh_access_token(self) -> None:
+        """Refresh the access token if the strategy supports it.
 
         This method attempts to use the refresh token to get a new access token
-        without requiring full re-authentication. If the refresh token has expired
-        or the refresh fails, it falls back to full client credentials authentication.
-
-        Returns:
-            str: The new access token.
+        without requiring full re-authentication. If the strategy doesn't support
+        refresh or the refresh fails, it falls back to full authentication.
 
         Raises:
-            ValueError: If no refresh token is available and client credentials fail.
+            ValueError: If unable to refresh or authenticate.
         """
-        logger.debug("Refreshing access token")
-        if self._refresh_token is None:
-            logger.debug("No refresh token available, doing full authentication")
-            return await self.authenticate_client_credentials()
+        logger.debug("Attempting to refresh access token")
 
-        try:
-            payload = {
-                "grant_type": "refresh_token",
-                "refresh_token": self._refresh_token,
-            }
+        if not self._auth_strategy.supports_refresh():
+            logger.debug("Strategy doesn't support refresh, doing full authentication")
+            await self.authenticate()
+            return
 
-            # Use direct HTTP request to avoid authentication loop
-            response = await self.request("POST", self._token_url, json=payload)
-            response.raise_for_status()
+        # Try to refresh with ClientCredentials strategy
+        if isinstance(self._auth_strategy, ClientCredentialsAuthStrategy):
+            token_data = await self._auth_strategy.refresh_async(self)
+            if token_data:
+                self._auth_strategy.store_token_response(token_data)
+                logger.debug("Successfully refreshed access token")
+                return
 
-            token_data = response.json()
-            oauth_token_response = OAuthTokenResponse.model_validate(token_data)
+        # Refresh failed, fall back to full authentication
+        logger.debug("Refresh failed, falling back to full authentication")
+        await self.authenticate()
 
-            return self._store_token_data(oauth_token_response)
-
-        except (httpx.HTTPStatusError, httpx.RequestError, ValueError, KeyError):
-            # Refresh failed, fall back to full authentication
-            logger.debug("Refresh token failed, falling back to client credentials authentication")
-            return await self.authenticate_client_credentials()
-
-    async def _get_token(self) -> str:
-        """Get a valid authentication token.
+    async def _ensure_authenticated(self) -> None:
+        """Ensure the client is authenticated with a valid token.
 
         This method handles token lifecycle management, including:
         - Initial authentication if no token exists
         - Token refresh if access token has expired
         - Fallback to full re-authentication if refresh fails
 
-        Returns:
-            str: A valid authentication token.
-
         Raises:
             Exception: If unable to obtain a valid token.
         """
-        if self._access_token is None or self.is_token_expired:
-            logger.debug("No access token or token is expired")
+        if self._auth_strategy.needs_refresh():
+            logger.debug("Token needs refresh or doesn't exist")
             try:
                 await self.refresh_access_token()
             except Exception:
-                logger.debug("Refresh token failed, doing full authentication", exc_info=True)
-                await self.authenticate_client_credentials()
-
-        if self._access_token is None:
-            raise Exception("Failed to obtain a valid authentication token")
-
-        return self._access_token
+                logger.debug("Refresh failed, doing full authentication", exc_info=True)
+                await self.authenticate()
 
     async def request(
         self,
@@ -262,12 +222,12 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         if not path.startswith(("http://", "https://")):
             path = path.lstrip("/")
 
-        # Get authentication token
-        token = await self._get_token()
+        # Ensure authenticated
+        await self._ensure_authenticated()
 
         # Handle headers
         request_headers = headers or {}
-        request_headers.update({"Authorization": f"Bearer {token}"})
+        request_headers.update(self._auth_strategy.get_auth_headers())
 
         # Make the request
         try:
@@ -286,7 +246,7 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         if response.status_code == 401:
             # Token might be expired, try to refresh and retry once
             await self.refresh_access_token()
-            request_headers.update({"Authorization": f"Bearer {self._access_token}"})
+            request_headers.update(self._auth_strategy.get_auth_headers())
             response = await self.request(method, path, headers=request_headers, params=params, json=json, **kwargs)
 
         # Process the response
