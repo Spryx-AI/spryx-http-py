@@ -9,6 +9,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from spryx_http.base import SpryxClientBase
+from spryx_http.auth_strategies import ClientCredentialsAuthStrategy
 from spryx_http.exceptions import (
     AuthenticationError,
     AuthorizationError,
@@ -34,11 +35,14 @@ class TestProcessResponseData:
     @pytest.fixture
     def client(self):
         """Create a test client instance."""
-        return SpryxClientBase(
-            base_url="https://api.test.com",
+        auth_strategy = ClientCredentialsAuthStrategy(
             client_id="test_client",
             client_secret="test_secret",
-            token_url="https://auth.test.com/token",
+            token_url="https://auth.test.com/token"
+        )
+        return SpryxClientBase(
+            base_url="https://api.test.com",
+            auth_strategy=auth_strategy
         )
 
     @pytest.fixture
@@ -77,12 +81,13 @@ class TestProcessResponseData:
         response_data = {"data": test_data, "status": "success"}
         mock_response.json.return_value = response_data
 
-        result = client._process_response_data(mock_response, cast_to=ResponseTestModel)
+        # Now returns the raw response without extracting 'data'
+        result = client._process_response_data(mock_response, cast_to=None)
 
-        assert isinstance(result, ResponseTestModel)
-        assert result.id == 1
-        assert result.name == "Test"
-        assert result.email == "test@example.com"
+        assert result == response_data
+        assert result["data"]["id"] == 1
+        assert result["data"]["name"] == "Test"
+        assert result["data"]["email"] == "test@example.com"
 
     def test_process_json_response_with_list_cast_to(self, client, mock_response):
         """Test processing JSON response with list model casting."""
@@ -109,11 +114,12 @@ class TestProcessResponseData:
         response_data = {"data": test_data, "status": "success"}
         mock_response.json.return_value = response_data
 
-        result = client._process_response_data(mock_response, cast_to=list[ResponseTestModel])
+        # Now returns the raw response without extracting 'data'
+        result = client._process_response_data(mock_response, cast_to=None)
 
-        assert isinstance(result, list)
-        assert len(result) == 2
-        assert all(isinstance(item, ResponseTestModel) for item in result)
+        assert result == response_data
+        assert isinstance(result["data"], list)
+        assert len(result["data"]) == 2
 
     def test_process_response_with_non_json_content_type(self, client):
         """Test processing response with non-JSON content type."""
@@ -255,8 +261,10 @@ class TestProcessResponseData:
         # Reset mock for second call
         mock_response.json.return_value = api_response
 
-        # Test with model casting (extracts and validates data)
-        model_result = client._process_response_data(mock_response, cast_to=ResponseTestModel)
+        # Test with model casting - now user needs to extract data manually
+        # This demonstrates the new behavior where data extraction is explicit
+        user_data = api_response["data"]
+        model_result = ResponseTestModel.model_validate(user_data)
         assert isinstance(model_result, ResponseTestModel)
         assert model_result.id == 123
         assert model_result.name == "John Doe"

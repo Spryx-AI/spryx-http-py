@@ -68,18 +68,16 @@ class SpryxClientBase:
         return kwargs
 
     def _extract_data_from_response(self, response_json: ResponseJson | None) -> Any:
-        """Extract data from standardized API response.
+        """Extract data from API response.
 
-        In our standardized API response, the actual entity is always under a 'data' key.
+        Returns the response data as-is without extracting nested fields.
 
         Args:
             response_data: The response data dictionary.
 
         Returns:
-            Any: The extracted data.
+            Any: The response data.
         """
-        if response_json is not None and "data" in response_json:
-            return response_json["data"]
         return response_json
 
     def _parse_model_data(self, model_cls: type[T] | type[list[T]], data: Any) -> T | list[T]:

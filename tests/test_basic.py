@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from spryx_http import SpryxAsyncClient, SpryxSyncClient
+from spryx_http import SpryxAsyncClient, SpryxSyncClient, ClientCredentialsAuthStrategy
 
 
 def test_package_structure():
@@ -31,82 +31,104 @@ class TestSpryxAsyncClient:
     @pytest.mark.asyncio
     async def test_async_client_initialization(self):
         """Test that SpryxAsyncClient can be initialized properly."""
-        client = SpryxAsyncClient(
-            base_url="https://api.example.com",
+        auth_strategy = ClientCredentialsAuthStrategy(
             client_id="test_client_id",
             client_secret="test_client_secret",
-            token_url="https://auth.example.com/token",
+            token_url="https://auth.example.com/token"
+        )
+        
+        client = SpryxAsyncClient(
+            base_url="https://api.example.com",
+            auth_strategy=auth_strategy
         )
 
         assert client._base_url == "https://api.example.com"
-        assert client._client_id == "test_client_id"
-        assert client._client_secret == "test_client_secret"
-        assert client._token_url == "https://auth.example.com/token"
+        assert client._auth_strategy == auth_strategy
+        assert client._auth_strategy.client_id == "test_client_id"
+        assert client._auth_strategy.client_secret == "test_client_secret"
+        assert client._auth_strategy.token_url == "https://auth.example.com/token"
 
     @pytest.mark.asyncio
     async def test_async_token_expiration_check(self):
         """Test token expiration validation."""
-        client = SpryxAsyncClient(
-            base_url="https://api.example.com",
+        auth_strategy = ClientCredentialsAuthStrategy(
             client_id="test_client_id",
             client_secret="test_client_secret",
-            token_url="https://auth.example.com/token",
+            token_url="https://auth.example.com/token"
+        )
+        
+        client = SpryxAsyncClient(
+            base_url="https://api.example.com",
+            auth_strategy=auth_strategy
         )
 
-        # Initially token should be expired (None)
-        assert client.is_token_expired is True
+        # Initially token should need refresh (None)
+        assert client._auth_strategy.needs_refresh() is True
 
         # Set a token with future expiration
         import time
 
-        client._access_token = "test_token"
-        client._token_expires_at = int(time.time()) + 3600  # 1 hour from now
+        client._auth_strategy._access_token = "test_token"
+        client._auth_strategy._token_expires_at = int(time.time()) + 3600  # 1 hour from now
 
-        assert client.is_token_expired is False
+        assert client._auth_strategy.needs_refresh() is False
 
 
 class TestSpryxSyncClient:
     def test_sync_client_initialization(self):
         """Test that SpryxSyncClient can be initialized properly."""
-        client = SpryxSyncClient(
-            base_url="https://api.example.com",
+        auth_strategy = ClientCredentialsAuthStrategy(
             client_id="test_client_id",
             client_secret="test_client_secret",
-            token_url="https://auth.example.com/token",
+            token_url="https://auth.example.com/token"
+        )
+        
+        client = SpryxSyncClient(
+            base_url="https://api.example.com",
+            auth_strategy=auth_strategy
         )
 
         assert client._base_url == "https://api.example.com"
-        assert client._client_id == "test_client_id"
-        assert client._client_secret == "test_client_secret"
-        assert client._token_url == "https://auth.example.com/token"
+        assert client._auth_strategy == auth_strategy
+        assert client._auth_strategy.client_id == "test_client_id"
+        assert client._auth_strategy.client_secret == "test_client_secret"
+        assert client._auth_strategy.token_url == "https://auth.example.com/token"
 
     def test_sync_token_expiration_check(self):
         """Test token expiration validation."""
-        client = SpryxSyncClient(
-            base_url="https://api.example.com",
+        auth_strategy = ClientCredentialsAuthStrategy(
             client_id="test_client_id",
             client_secret="test_client_secret",
-            token_url="https://auth.example.com/token",
+            token_url="https://auth.example.com/token"
+        )
+        
+        client = SpryxSyncClient(
+            base_url="https://api.example.com",
+            auth_strategy=auth_strategy
         )
 
-        # Initially token should be expired (None)
-        assert client.is_token_expired is True
+        # Initially token should need refresh (None)
+        assert client._auth_strategy.needs_refresh() is True
 
         # Set a token with future expiration
         import time
 
-        client._access_token = "test_token"
-        client._token_expires_at = int(time.time()) + 3600  # 1 hour from now
+        client._auth_strategy._access_token = "test_token"
+        client._auth_strategy._token_expires_at = int(time.time()) + 3600  # 1 hour from now
 
-        assert client.is_token_expired is False
+        assert client._auth_strategy.needs_refresh() is False
 
     def test_sync_client_inheritance(self):
         """Test that SpryxSyncClient has all expected methods."""
-        client = SpryxSyncClient(
-            base_url="https://api.example.com",
+        auth_strategy = ClientCredentialsAuthStrategy(
             client_id="test_client_id",
             client_secret="test_client_secret",
-            token_url="https://auth.example.com/token",
+            token_url="https://auth.example.com/token"
+        )
+        
+        client = SpryxSyncClient(
+            base_url="https://api.example.com",
+            auth_strategy=auth_strategy
         )
 
         # Test that sync client has all HTTP methods
@@ -133,27 +155,29 @@ class TestSharedFunctionality:
         """Test that both clients inherit from the same base."""
         from spryx_http.base import SpryxClientBase
 
-        async_client = SpryxAsyncClient(
-            base_url="https://api.example.com",
+        auth_strategy = ClientCredentialsAuthStrategy(
             client_id="test_client_id",
             client_secret="test_client_secret",
-            token_url="https://auth.example.com/token",
+            token_url="https://auth.example.com/token"
+        )
+        
+        async_client = SpryxAsyncClient(
+            base_url="https://api.example.com",
+            auth_strategy=auth_strategy
         )
 
         sync_client = SpryxSyncClient(
             base_url="https://api.example.com",
-            client_id="test_client_id",
-            client_secret="test_client_secret",
-            token_url="https://auth.example.com/token",
+            auth_strategy=auth_strategy
         )
 
         # Both should inherit from SpryxClientBase
         assert isinstance(async_client, SpryxClientBase)
         assert isinstance(sync_client, SpryxClientBase)
 
-        # Both should have same properties
-        assert hasattr(async_client, "is_token_expired")
-        assert hasattr(sync_client, "is_token_expired")
+        # Both should have same properties through auth strategy
+        assert hasattr(async_client._auth_strategy, "needs_refresh")
+        assert hasattr(sync_client._auth_strategy, "needs_refresh")
 
         # Both should have same data processing methods
         assert hasattr(async_client, "_extract_data_from_response")

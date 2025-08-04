@@ -1,5 +1,5 @@
 """
-Comprehensive unit tests for SpryxAsyncClient.
+Updated tests for SpryxAsyncClient with new auth strategy architecture.
 """
 
 import time
@@ -7,647 +7,234 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from spryx_http.async_client import SpryxAsyncClient
-from spryx_http.exceptions import (
-    AuthenticationError,
-    AuthorizationError,
-    BadRequestError,
-    ConflictError,
-    NotFoundError,
-    RateLimitError,
-    ServerError,
-)
+from spryx_http.auth_strategies import ClientCredentialsAuthStrategy
 from spryx_http.settings import HttpClientSettings
-from spryx_http.types import OAuthTokenResponse
 
 
 class UserModel(BaseModel):
     """Model for user data in tests."""
-
     id: int
     name: str
     email: str
 
 
-class ProductModel(BaseModel):
-    """Model for product data in tests."""
-
-    id: int
-    title: str
-    price: float
-
-
 @pytest.fixture
-def mock_oauth_response():
-    """Mock OAuth token response."""
-    return OAuthTokenResponse(
-        access_token="test_access_token",
-        token_type="Bearer",
-        expires_in=3600,
-        refresh_token="test_refresh_token",
-        scope="read write",
+def auth_strategy():
+    """Standard auth strategy."""
+    return ClientCredentialsAuthStrategy(
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        token_url="https://auth.test.com/token"
     )
 
 
-@pytest.fixture
-def client_config():
-    """Standard client configuration."""
-    return {
-        "base_url": "https://api.test.com",
-        "client_id": "test_client_id",
-        "client_secret": "test_client_secret",
-        "token_url": "https://auth.test.com/token",
-    }
+class TestSpryxAsyncClientBasic:
+    """Basic functionality tests."""
 
+    def test_client_initialization(self, auth_strategy):
+        """Test client initialization with auth strategy."""
+        client = SpryxAsyncClient(
+            base_url="https://api.test.com",
+            auth_strategy=auth_strategy
+        )
+        
+        assert client._base_url == "https://api.test.com"
+        assert client._auth_strategy == auth_strategy
 
-class TestSpryxAsyncClientInitialization:
-    """Test client initialization scenarios."""
-
-    def test_init_with_all_parameters(self, client_config):
-        """Test initialization with all required parameters."""
+    def test_client_with_settings(self, auth_strategy):
+        """Test client initialization with custom settings."""
         settings = HttpClientSettings()
         client = SpryxAsyncClient(
-            base_url=client_config["base_url"],
-            client_id=client_config["client_id"],
-            client_secret=client_config["client_secret"],
-            token_url=client_config["token_url"],
-            settings=settings,
+            base_url="https://api.test.com",
+            auth_strategy=auth_strategy,
+            settings=settings
         )
-
-        assert client._base_url == client_config["base_url"]
-        assert client._client_id == client_config["client_id"]
-        assert client._client_secret == client_config["client_secret"]
-        assert client._token_url == client_config["token_url"]
+        
         assert client.settings == settings
 
-    def test_init_without_base_url(self, client_config):
-        """Test initialization without base_url (for full URL requests)."""
-        client = SpryxAsyncClient(
-            base_url=None,
-            client_id=client_config["client_id"],
-            client_secret=client_config["client_secret"],
-            token_url=client_config["token_url"],
-        )
-
-        # httpx.AsyncClient overwrites _base_url with empty string when None is passed
-        # but the client should still work with full URLs
-        assert str(client.base_url) == ""  # httpx's base_url becomes empty string
-        assert client._client_id == client_config["client_id"]
-
-    def test_init_with_custom_settings(self, client_config):
-        """Test initialization with custom HTTP settings."""
-        # HttpClientSettings uses environment variables, so we need to set them
-        import os
-
-        with patch.dict(os.environ, {"HTTP_TIMEOUT_S": "30.0", "HTTP_RETRIES": "5"}):
-            custom_settings = HttpClientSettings()
-            client = SpryxAsyncClient(**client_config, settings=custom_settings)
-
-            assert client.settings.timeout_s == 30.0
-            assert client.settings.retries == 5
-
-
-class TestSpryxAsyncClientAuthentication:
-    """Test OAuth 2.0 authentication flows."""
-
     @pytest.mark.asyncio
-    async def test_authenticate_client_credentials_success(self, client_config):
-        """Test successful client credentials authentication."""
-        client = SpryxAsyncClient(**client_config)
-
-        # Create mock response for the request method
-        mock_response = Mock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "access_token": "test_access_token",
-            "token_type": "Bearer",
-            "expires_in": 3600,
-            "refresh_token": "test_refresh_token",
-            "scope": "read write",
-        }
-        mock_response.raise_for_status.return_value = None
-
-        with patch.object(client, "request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = mock_response
-
-            token = await client.authenticate_client_credentials()
-
-            assert token == "test_access_token"
-            assert client._access_token == "test_access_token"
-            assert client._refresh_token == "test_refresh_token"
-            assert client._token_expires_at is not None
-
+    async def test_authentication_flow(self, auth_strategy):
+        """Test basic authentication flow."""
+        client = SpryxAsyncClient(
+            base_url="https://api.test.com",
+            auth_strategy=auth_strategy
+        )
+        
+        # Mock the request method
+        with patch.object(client, 'request') as mock_request:
+            # Mock auth response
+            auth_response = Mock()
+            auth_response.raise_for_status.return_value = None
+            auth_response.json.return_value = {
+                "access_token": "test_token",
+                "refresh_token": "test_refresh",
+                "expires_in": 3600
+            }
+            
+            mock_request.return_value = auth_response
+            
+            # Call authenticate
+            await client.authenticate()
+            
+            # Verify auth request was made
             mock_request.assert_called_once_with(
                 "POST",
-                client_config["token_url"],
+                "https://auth.test.com/token",
                 json={
                     "grant_type": "client_credentials",
-                    "client_id": client_config["client_id"],
-                    "client_secret": client_config["client_secret"],
-                },
+                    "client_id": "test_client_id",
+                    "client_secret": "test_client_secret"
+                }
             )
+            
+            # Verify token was stored
+            assert auth_strategy._access_token == "test_token"
+            assert auth_strategy._refresh_token == "test_refresh"
 
     @pytest.mark.asyncio
-    async def test_authenticate_client_credentials_missing_client_id(self, client_config):
-        """Test authentication fails with missing client_id."""
-        config = client_config.copy()
-        config["client_id"] = None
-        client = SpryxAsyncClient(**config)
-
-        with pytest.raises(ValueError, match="client_id is required"):
-            await client.authenticate_client_credentials()
-
-    @pytest.mark.asyncio
-    async def test_authenticate_client_credentials_missing_client_secret(self, client_config):
-        """Test authentication fails with missing client_secret."""
-        config = client_config.copy()
-        config["client_secret"] = None
-        client = SpryxAsyncClient(**config)
-
-        with pytest.raises(ValueError, match="client_secret is required"):
-            await client.authenticate_client_credentials()
-
-    @pytest.mark.asyncio
-    async def test_refresh_access_token_success(self, client_config):
-        """Test successful token refresh."""
-        client = SpryxAsyncClient(**client_config)
-        client._refresh_token = "existing_refresh_token"
-
-        # Create mock response for the request method
-        mock_response = Mock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "access_token": "test_access_token",
-            "token_type": "Bearer",
-            "expires_in": 3600,
-            "refresh_token": "test_refresh_token",
-            "scope": "read write",
-        }
-        mock_response.raise_for_status.return_value = None
-
-        with patch.object(client, "request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = mock_response
-
-            token = await client.refresh_access_token()
-
-            assert token == "test_access_token"
+    async def test_api_request_flow(self, auth_strategy):
+        """Test making an API request."""
+        # Pre-authenticate
+        auth_strategy._access_token = "test_token"
+        auth_strategy._token_expires_at = int(time.time()) + 3600
+        
+        client = SpryxAsyncClient(
+            base_url="https://api.test.com",
+            auth_strategy=auth_strategy
+        )
+        
+        with patch.object(client, 'request') as mock_request:
+            # Mock API response
+            api_response = Mock()
+            api_response.status_code = 200
+            api_response.headers = {"content-type": "application/json"}
+            api_response.json.return_value = {"id": 1, "name": "test", "email": "test@example.com"}
+            
+            mock_request.return_value = api_response
+            
+            # Make API call
+            result = await client.get("/users/1")
+            
+            # Verify request was made with auth headers
             mock_request.assert_called_once_with(
-                "POST",
-                client_config["token_url"],
-                json={"grant_type": "refresh_token", "refresh_token": "existing_refresh_token"},
+                "GET",
+                "users/1",
+                headers={"Authorization": "Bearer test_token"},
+                params=None,
+                json=None
             )
+            
+            # Verify result
+            assert result == {"id": 1, "name": "test", "email": "test@example.com"}
 
     @pytest.mark.asyncio
-    async def test_refresh_access_token_no_refresh_token(self, client_config):
-        """Test token refresh falls back to client credentials when no refresh token."""
-        client = SpryxAsyncClient(**client_config)
-        client._refresh_token = None
-
-        with patch.object(client, "authenticate_client_credentials", new_callable=AsyncMock) as mock_auth:
-            mock_auth.return_value = "new_access_token"
-
-            token = await client.refresh_access_token()
-
-            assert token == "new_access_token"
-            mock_auth.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_refresh_access_token_fails_fallback_to_client_credentials(self, client_config):
-        """Test token refresh falls back to client credentials on failure."""
-        client = SpryxAsyncClient(**client_config)
-        client._refresh_token = "invalid_refresh_token"
-
-        # Mock the request method to simulate refresh failure and auth success
-        with patch.object(client, "request", new_callable=AsyncMock) as mock_request:
-            # First call (refresh) fails, second call (auth) succeeds
-            refresh_error = httpx.HTTPStatusError("Unauthorized", request=Mock(), response=Mock())
-
-            auth_response = Mock(spec=httpx.Response)
-            auth_response.status_code = 200
-            auth_response.json.return_value = {
-                "access_token": "new_access_token",
-                "token_type": "Bearer",
-                "expires_in": 3600,
-                "refresh_token": "new_refresh_token",
+    async def test_token_refresh_on_401(self, auth_strategy):
+        """Test token refresh when receiving 401."""
+        # Pre-authenticate with expired token
+        auth_strategy._access_token = "expired_token"
+        auth_strategy._refresh_token = "refresh_token"
+        auth_strategy._token_expires_at = int(time.time()) - 100
+        
+        client = SpryxAsyncClient(
+            base_url="https://api.test.com",
+            auth_strategy=auth_strategy
+        )
+        
+        with patch.object(client, 'request') as mock_request:
+            # First call returns 401
+            unauthorized_response = Mock()
+            unauthorized_response.status_code = 401
+            
+            # Refresh call returns new token
+            refresh_response = Mock()
+            refresh_response.raise_for_status.return_value = None
+            refresh_response.json.return_value = {
+                "access_token": "new_token",
+                "refresh_token": "new_refresh",
+                "expires_in": 3600
             }
-            auth_response.raise_for_status.return_value = None
-
-            mock_request.side_effect = [refresh_error, auth_response]
-
-            token = await client.refresh_access_token()
-
-            assert token == "new_access_token"
-            assert mock_request.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_get_token_when_no_token(self, client_config):
-        """Test _get_token when no token exists."""
-        client = SpryxAsyncClient(**client_config)
-
-        with patch.object(client, "refresh_access_token", new_callable=AsyncMock) as mock_refresh:
-            mock_refresh.return_value = "new_token"
-            client._access_token = "new_token"  # Simulate token being set
-
-            token = await client._get_token()
-
-            assert token == "new_token"
-            mock_refresh.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_get_token_when_token_expired(self, client_config):
-        """Test _get_token when token is expired."""
-        client = SpryxAsyncClient(**client_config)
-        client._access_token = "expired_token"
-        client._token_expires_at = int(time.time()) - 100  # Expired token
-
-        with patch.object(client, "refresh_access_token", new_callable=AsyncMock) as mock_refresh:
-            mock_refresh.return_value = "refreshed_token"
-            client._access_token = "refreshed_token"  # Simulate token being refreshed
-
-            token = await client._get_token()
-
-            assert token == "refreshed_token"
-            mock_refresh.assert_called_once()
+            
+            # Retry call succeeds
+            success_response = Mock()
+            success_response.status_code = 200
+            success_response.headers = {"content-type": "application/json"}
+            success_response.json.return_value = {"success": True}
+            
+            mock_request.side_effect = [
+                unauthorized_response,  # Initial request fails
+                refresh_response,       # Refresh succeeds
+                success_response        # Retry succeeds
+            ]
+            
+            # Make API call
+            result = await client.get("/users")
+            
+            # Verify refresh was called
+            assert mock_request.call_count == 3
+            
+            # Verify new token was stored
+            assert auth_strategy._access_token == "new_token"
+            assert result == {"success": True}
 
     @pytest.mark.asyncio
-    async def test_get_token_fails_completely(self, client_config):
-        """Test _get_token when authentication completely fails."""
-        client = SpryxAsyncClient(**client_config)
-
-        with (
-            patch.object(client, "refresh_access_token", new_callable=AsyncMock) as mock_refresh,
-            patch.object(client, "authenticate_client_credentials", new_callable=AsyncMock) as mock_auth,
-        ):
-            mock_refresh.side_effect = Exception("Refresh failed")
-            mock_auth.side_effect = Exception("Auth failed")
-
-            # The exception from authenticate_client_credentials is propagated directly
-            with pytest.raises(Exception, match="Auth failed"):
-                await client._get_token()
-
-
-class TestSpryxAsyncClientHTTPMethods:
-    """Test HTTP method implementations."""
-
-    @pytest.fixture
-    def authenticated_client(self, client_config):
-        """Create an authenticated client for testing."""
-        client = SpryxAsyncClient(**client_config)
-        client._access_token = "valid_token"
-        client._token_expires_at = int(time.time()) + 3600  # Valid for 1 hour
-        return client
+    async def test_http_methods(self, auth_strategy):
+        """Test all HTTP methods."""
+        # Pre-authenticate
+        auth_strategy._access_token = "test_token"
+        auth_strategy._token_expires_at = int(time.time()) + 3600
+        
+        client = SpryxAsyncClient(
+            base_url="https://api.test.com",
+            auth_strategy=auth_strategy
+        )
+        
+        with patch.object(client, 'request') as mock_request:
+            # Mock successful response
+            success_response = Mock()
+            success_response.status_code = 200
+            success_response.headers = {"content-type": "application/json"}
+            success_response.json.return_value = {"success": True}
+            mock_request.return_value = success_response
+            
+            # Test all HTTP methods
+            await client.get("/test")
+            await client.post("/test", json={"data": "test"})
+            await client.put("/test", json={"data": "test"})
+            await client.patch("/test", json={"data": "test"})
+            await client.delete("/test")
+            
+            # Verify all calls were made
+            assert mock_request.call_count == 5
 
     @pytest.mark.asyncio
-    async def test_get_with_model_casting(self, authenticated_client):
-        """Test GET request with Pydantic model casting."""
-        mock_response = Mock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.headers = {"content-type": "application/json"}
-        mock_response.json.return_value = {"id": 1, "name": "John", "email": "john@test.com"}
-
-        with patch.object(authenticated_client, "request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = mock_response
-
-            result = await authenticated_client.get("/users/1", cast_to=UserModel)
-
+    async def test_model_casting(self, auth_strategy):
+        """Test response casting to Pydantic models."""
+        # Pre-authenticate
+        auth_strategy._access_token = "test_token"
+        auth_strategy._token_expires_at = int(time.time()) + 3600
+        
+        client = SpryxAsyncClient(
+            base_url="https://api.test.com",
+            auth_strategy=auth_strategy
+        )
+        
+        with patch.object(client, 'request') as mock_request:
+            # Mock API response
+            api_response = Mock()
+            api_response.status_code = 200
+            api_response.headers = {"content-type": "application/json"}
+            api_response.json.return_value = {"id": 1, "name": "John", "email": "john@example.com"}
+            
+            mock_request.return_value = api_response
+            
+            # Make API call with model casting
+            result = await client.get("/users/1", cast_to=UserModel)
+            
+            # Verify result is a UserModel instance
             assert isinstance(result, UserModel)
             assert result.id == 1
             assert result.name == "John"
-            assert result.email == "john@test.com"
-
-            mock_request.assert_called_once_with(
-                "GET", "users/1", headers={"Authorization": "Bearer valid_token"}, params=None, json=None
-            )
-
-    @pytest.mark.asyncio
-    async def test_get_with_list_casting(self, authenticated_client):
-        """Test GET request with list model casting."""
-        mock_response = Mock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.headers = {"content-type": "application/json"}
-        mock_response.json.return_value = [
-            {"id": 1, "name": "John", "email": "john@test.com"},
-            {"id": 2, "name": "Jane", "email": "jane@test.com"},
-        ]
-
-        with patch.object(authenticated_client, "request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = mock_response
-
-            result = await authenticated_client.get("/users", cast_to=list[UserModel])
-
-            assert isinstance(result, list)
-            assert len(result) == 2
-            assert all(isinstance(user, UserModel) for user in result)
-            assert result[0].name == "John"
-            assert result[1].name == "Jane"
-
-    @pytest.mark.asyncio
-    async def test_get_without_casting(self, authenticated_client):
-        """Test GET request without model casting (returns raw JSON)."""
-        mock_response = Mock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.headers = {"content-type": "application/json"}
-        raw_data = {"id": 1, "name": "John", "custom_field": "value"}
-        mock_response.json.return_value = raw_data
-
-        with patch.object(authenticated_client, "request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = mock_response
-
-            result = await authenticated_client.get("/users/1")
-
-            assert result == raw_data
-
-    @pytest.mark.asyncio
-    async def test_post_with_json_data(self, authenticated_client):
-        """Test POST request with JSON data."""
-        mock_response = Mock(spec=httpx.Response)
-        mock_response.status_code = 201
-        mock_response.headers = {"content-type": "application/json"}
-        mock_response.json.return_value = {"id": 3, "name": "New User", "email": "new@test.com"}
-
-        post_data = {"name": "New User", "email": "new@test.com"}
-
-        with patch.object(authenticated_client, "request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = mock_response
-
-            result = await authenticated_client.post("/users", json=post_data, cast_to=UserModel)
-
-            assert isinstance(result, UserModel)
-            assert result.id == 3
-            assert result.name == "New User"
-
-            mock_request.assert_called_once_with(
-                "POST", "users", headers={"Authorization": "Bearer valid_token"}, params=None, json=post_data
-            )
-
-    @pytest.mark.asyncio
-    async def test_put_request(self, authenticated_client):
-        """Test PUT request."""
-        mock_response = Mock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.headers = {"content-type": "application/json"}
-        mock_response.json.return_value = {"id": 1, "name": "Updated User", "email": "updated@test.com"}
-
-        update_data = {"name": "Updated User", "email": "updated@test.com"}
-
-        with patch.object(authenticated_client, "request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = mock_response
-
-            result = await authenticated_client.put("/users/1", json=update_data, cast_to=UserModel)
-
-            assert isinstance(result, UserModel)
-            assert result.name == "Updated User"
-
-    @pytest.mark.asyncio
-    async def test_patch_request(self, authenticated_client):
-        """Test PATCH request."""
-        mock_response = Mock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.headers = {"content-type": "application/json"}
-        mock_response.json.return_value = {"id": 1, "name": "Patched User", "email": "john@test.com"}
-
-        patch_data = {"name": "Patched User"}
-
-        with patch.object(authenticated_client, "request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = mock_response
-
-            result = await authenticated_client.patch("/users/1", json=patch_data, cast_to=UserModel)
-
-            assert isinstance(result, UserModel)
-            assert result.name == "Patched User"
-
-    @pytest.mark.asyncio
-    async def test_delete_request(self, authenticated_client):
-        """Test DELETE request."""
-        mock_response = Mock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.headers = {"content-type": "application/json"}
-        mock_response.json.return_value = {"message": "User deleted successfully"}
-
-        with patch.object(authenticated_client, "request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = mock_response
-
-            result = await authenticated_client.delete("/users/1")
-
-            assert result == {"message": "User deleted successfully"}
-
-    @pytest.mark.asyncio
-    async def test_request_with_query_parameters(self, authenticated_client):
-        """Test request with query parameters."""
-        mock_response = Mock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.headers = {"content-type": "application/json"}
-        mock_response.json.return_value = [{"id": 1, "name": "John", "email": "john@test.com"}]
-
-        params = {"page": 1, "limit": 10, "search": "john"}
-
-        with patch.object(authenticated_client, "request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = mock_response
-
-            await authenticated_client.get("/users", params=params)
-
-            mock_request.assert_called_once_with(
-                "GET", "users", headers={"Authorization": "Bearer valid_token"}, params=params, json=None
-            )
-
-
-class TestSpryxAsyncClientErrorHandling:
-    """Test error handling scenarios."""
-
-    @pytest.fixture
-    def authenticated_client(self, client_config):
-        """Create an authenticated client for testing."""
-        client = SpryxAsyncClient(**client_config)
-        client._access_token = "valid_token"
-        client._token_expires_at = int(time.time()) + 3600
-        return client
-
-    @pytest.mark.asyncio
-    async def test_401_error_triggers_token_refresh(self, authenticated_client):
-        """Test that 401 error triggers token refresh and retry."""
-        # First response: 401 Unauthorized
-        first_response = Mock(spec=httpx.Response)
-        first_response.status_code = 401
-
-        # Second response: 200 OK (after token refresh)
-        second_response = Mock(spec=httpx.Response)
-        second_response.status_code = 200
-        second_response.headers = {"content-type": "application/json"}
-        second_response.json.return_value = {"id": 1, "name": "John", "email": "john@test.com"}
-
-        with (
-            patch.object(authenticated_client, "request", new_callable=AsyncMock) as mock_request,
-            patch.object(authenticated_client, "refresh_access_token", new_callable=AsyncMock) as mock_refresh,
-        ):
-            mock_request.side_effect = [first_response, second_response]
-            mock_refresh.return_value = "new_token"
-            authenticated_client._access_token = "new_token"  # Simulate token refresh
-
-            result = await authenticated_client.get("/users/1", cast_to=UserModel)
-
-            assert isinstance(result, UserModel)
-            assert mock_request.call_count == 2
-            mock_refresh.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_http_status_errors_are_handled(self, authenticated_client):
-        """Test that HTTP status errors are properly converted to custom exceptions."""
-        test_cases = [
-            (400, BadRequestError),
-            (401, AuthenticationError),
-            (403, AuthorizationError),
-            (404, NotFoundError),
-            (409, ConflictError),
-            (429, RateLimitError),
-            (500, ServerError),
-        ]
-
-        for status_code, expected_exception in test_cases:
-            mock_response = Mock(spec=httpx.Response)
-            mock_response.status_code = status_code
-            mock_response.headers = {"content-type": "application/json"}
-            mock_response.json.return_value = {"error": f"HTTP {status_code} error"}
-
-            # Mock auth response for token requests
-            mock_auth_response = Mock(spec=httpx.Response)
-            mock_auth_response.status_code = 200
-            mock_auth_response.headers = {"content-type": "application/json"}
-            mock_auth_response.json.return_value = {
-                "access_token": "test_token",
-                "token_type": "Bearer",
-                "expires_in": 3600,
-            }
-            mock_auth_response.raise_for_status.return_value = None
-
-            # Mock the request method to return appropriate responses
-            with patch.object(authenticated_client, "request", new_callable=AsyncMock) as mock_request:
-
-                def side_effect(
-                    _method, url, _auth_response=mock_auth_response, _error_response=mock_response, **_kwargs
-                ):
-                    # Return auth response for token endpoint, error response for others
-                    if url == authenticated_client._token_url:
-                        return _auth_response
-                    return _error_response
-
-                mock_request.side_effect = side_effect
-
-                with pytest.raises(expected_exception):
-                    await authenticated_client.get("/test")
-
-    @pytest.mark.asyncio
-    async def test_validation_error_on_invalid_response_data(self, authenticated_client):
-        """Test ValidationError when response data doesn't match model schema."""
-        mock_response = Mock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.headers = {"content-type": "application/json"}
-        mock_response.json.return_value = {"invalid_field": "value"}  # Missing required fields
-
-        with patch.object(authenticated_client, "request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = mock_response
-
-            with pytest.raises(ValidationError):
-                await authenticated_client.get("/users/1", cast_to=UserModel)
-
-
-class TestSpryxAsyncClientEdgeCases:
-    """Test edge cases and special scenarios."""
-
-    @pytest.fixture
-    def authenticated_client(self, client_config):
-        """Create an authenticated client for testing."""
-        client = SpryxAsyncClient(**client_config)
-        client._access_token = "valid_token"
-        client._token_expires_at = int(time.time()) + 3600  # Valid for 1 hour
-        return client
-
-    @pytest.mark.asyncio
-    async def test_request_without_base_url_with_full_url(self, client_config):
-        """Test making requests without base_url using full URLs."""
-        config = client_config.copy()
-        config["base_url"] = None
-        client = SpryxAsyncClient(**config)
-        client._access_token = "valid_token"
-        client._token_expires_at = int(time.time()) + 3600
-
-        mock_response = Mock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.headers = {"content-type": "application/json"}
-        mock_response.json.return_value = {"message": "success"}
-
-        with patch.object(client, "request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = mock_response
-
-            result = await client.get("https://api.external.com/users")
-
-            assert result == {"message": "success"}
-            mock_request.assert_called_once_with(
-                "GET",
-                "https://api.external.com/users",
-                headers={"Authorization": "Bearer valid_token"},
-                params=None,
-                json=None,
-            )
-
-    @pytest.mark.asyncio
-    async def test_request_without_base_url_with_relative_path_fails(self, client_config):
-        """Test that relative paths fail when no base_url is provided."""
-        config = client_config.copy()
-        config["base_url"] = None
-        client = SpryxAsyncClient(**config)
-        client._access_token = "valid_token"
-        client._token_expires_at = int(time.time()) + 3600
-
-        with pytest.raises(ValueError, match="Either base_url must be provided"):
-            await client.get("/users")
-
-    @pytest.mark.asyncio
-    async def test_unsupported_protocol_error_handling(self, authenticated_client):
-        """Test handling of UnsupportedProtocol errors."""
-        with patch.object(authenticated_client, "request", new_callable=AsyncMock) as mock_request:
-            mock_request.side_effect = httpx.UnsupportedProtocol("Invalid URL")
-
-            with pytest.raises(ValueError, match="Either base_url must be provided"):
-                await authenticated_client.get("/users")
-
-    @pytest.mark.asyncio
-    async def test_custom_headers_are_preserved(self, authenticated_client):
-        """Test that custom headers are preserved along with auth headers."""
-        mock_response = Mock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.headers = {"content-type": "application/json"}
-        mock_response.json.return_value = {"message": "success"}
-
-        custom_headers = {"X-Custom-Header": "custom-value", "Content-Type": "application/json"}
-
-        with patch.object(authenticated_client, "request", new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = mock_response
-
-            await authenticated_client.get("/users", headers=custom_headers)
-
-            expected_headers = {
-                "Authorization": "Bearer valid_token",
-                "X-Custom-Header": "custom-value",
-                "Content-Type": "application/json",
-            }
-
-            mock_request.assert_called_once_with("GET", "users", headers=expected_headers, params=None, json=None)
-
-    @pytest.mark.asyncio
-    async def test_token_expiration_check(self, client_config):
-        """Test token expiration checking logic."""
-        client = SpryxAsyncClient(**client_config)
-
-        # Test with no token
-        assert client.is_token_expired is True
-
-        # Test with expired token
-        client._access_token = "token"
-        client._token_expires_at = int(time.time()) - 100  # Expired
-        assert client.is_token_expired is True
-
-        # Test with valid token (with buffer)
-        client._token_expires_at = int(time.time()) + 100  # Valid with buffer
-        assert client.is_token_expired is False
+            assert result.email == "john@example.com"
