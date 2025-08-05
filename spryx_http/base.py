@@ -1,7 +1,7 @@
 from typing import Any, TypeVar, cast
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 from spryx_core import NotGiven
 
 from spryx_http.auth_strategies import AuthStrategy
@@ -80,16 +80,19 @@ class SpryxClientBase:
         """
         return response_json
 
-    def _parse_model_data(self, model_cls: type[T] | type[list[T]], data: Any) -> T | list[T]:
-        """Parse data into a Pydantic model or list of models.
+    def _parse_model_data(self, model_cls: type[T] | type[list[T]] | TypeAdapter, data: Any) -> T | list[T] | Any:
+        """Parse data into a Pydantic model, list of models, or using TypeAdapter.
 
         Args:
-            model_cls: The Pydantic model class or list type to parse into.
+            model_cls: The Pydantic model class, list type, or TypeAdapter to parse with.
             data: The data to parse.
 
         Returns:
-            T | list[T]: Parsed model instance or list of instances.
+            T | list[T] | Any: Parsed data.
         """
+        # Handle TypeAdapter
+        if isinstance(model_cls, TypeAdapter):
+            return model_cls.validate_python(data)
         # Check if it's a list type by string representation (works for typing generics)
         if str(model_cls).startswith("typing.Generic") or "list[" in str(model_cls):
             # Extract the inner type from list[T] using typing inspection
@@ -123,17 +126,17 @@ class SpryxClientBase:
         return [model_cls.model_validate(item) for item in data]
 
     def _process_response_data(
-        self, response: httpx.Response, cast_to: type[T] | type[list[T]] | None = None
-    ) -> T | list[T] | ResponseJson:
+        self, response: httpx.Response, cast_to: type[T] | type[list[T]] | TypeAdapter | None = None
+    ) -> T | list[T] | Any | ResponseJson:
         """Process the response by validating status and converting to model.
 
         Args:
             response: The HTTP response.
-            cast_to: Optional Pydantic model class to parse response into.
+            cast_to: Optional Pydantic model class, list of models, or TypeAdapter to parse response into.
                      If None, returns the raw JSON data.
 
         Returns:
-            T | ResponseJson: Pydantic model instance or raw JSON data.
+            T | list[T] | Any | ResponseJson: Parsed data or raw JSON data.
         """
         response_json = None
         content_type = response.headers.get("content-type") if response.headers is not None else None

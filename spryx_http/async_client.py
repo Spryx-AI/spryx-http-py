@@ -7,7 +7,7 @@ with OAuth 2.0 M2M authentication, retry logic, and Pydantic model parsing suppo
 from typing import Any, TypeVar, overload
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from spryx_http.auth_strategies import AuthStrategy, ClientCredentialsAuthStrategy
 
@@ -181,6 +181,19 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         method: str,
         path: str,
         *,
+        cast_to: TypeAdapter,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        **kwargs,
+    ) -> Any: ...
+
+    @overload
+    async def _make_request(
+        self,
+        method: str,
+        path: str,
+        *,
         cast_to: None = None,
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
@@ -193,12 +206,12 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         method: str,
         path: str,
         *,
-        cast_to: type[T] | type[list[T]] | None = None,
+        cast_to: type[T] | type[list[T]] | TypeAdapter | None = None,
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         **kwargs,
-    ) -> T | list[T] | ResponseJson:
+    ) -> T | list[T] | Any | ResponseJson:
         """Core request method to handle HTTP requests with optional Pydantic model parsing.
 
         Args:
@@ -278,6 +291,16 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         self,
         path: str,
         *,
+        cast_to: TypeAdapter,
+        params: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> Any: ...
+
+    @overload
+    async def get(
+        self,
+        path: str,
+        *,
         cast_to: None = None,
         params: dict[str, Any] | None = None,
         **kwargs,
@@ -287,10 +310,10 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         self,
         path: str,
         *,
-        cast_to: type[T] | type[list[T]] | None = None,
+        cast_to: type[T] | type[list[T]] | TypeAdapter | None = None,
         params: dict[str, Any] | None = None,
         **kwargs,
-    ) -> T | list[T] | ResponseJson:
+    ) -> T | list[T] | Any | ResponseJson:
         """Send a GET request.
 
         Args:
@@ -330,6 +353,16 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         self,
         path: str,
         *,
+        cast_to: TypeAdapter,
+        json: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> Any: ...
+
+    @overload
+    async def post(
+        self,
+        path: str,
+        *,
         cast_to: None = None,
         json: dict[str, Any] | None = None,
         **kwargs,
@@ -339,10 +372,10 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         self,
         path: str,
         *,
-        cast_to: type[T] | type[list[T]] | None = None,
+        cast_to: type[T] | type[list[T]] | TypeAdapter | None = None,
         json: dict[str, Any] | None = None,
         **kwargs,
-    ) -> T | list[T] | ResponseJson:
+    ) -> T | list[T] | Any | ResponseJson:
         """Send a POST request.
 
         Args:
@@ -382,6 +415,16 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         self,
         path: str,
         *,
+        cast_to: TypeAdapter,
+        json: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> Any: ...
+
+    @overload
+    async def put(
+        self,
+        path: str,
+        *,
         cast_to: None = None,
         json: dict[str, Any] | None = None,
         **kwargs,
@@ -391,10 +434,10 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         self,
         path: str,
         *,
-        cast_to: type[T] | type[list[T]] | None = None,
+        cast_to: type[T] | type[list[T]] | TypeAdapter | None = None,
         json: dict[str, Any] | None = None,
         **kwargs,
-    ) -> T | list[T] | ResponseJson:
+    ) -> T | list[T] | Any | ResponseJson:
         """Send a PUT request.
 
         Args:
@@ -434,6 +477,16 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         self,
         path: str,
         *,
+        cast_to: TypeAdapter,
+        json: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> Any: ...
+
+    @overload
+    async def patch(
+        self,
+        path: str,
+        *,
         cast_to: None = None,
         json: dict[str, Any] | None = None,
         **kwargs,
@@ -443,10 +496,10 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         self,
         path: str,
         *,
-        cast_to: type[T] | type[list[T]] | None = None,
+        cast_to: type[T] | type[list[T]] | TypeAdapter | None = None,
         json: dict[str, Any] | None = None,
         **kwargs,
-    ) -> T | list[T] | ResponseJson:
+    ) -> T | list[T] | Any | ResponseJson:
         """Send a PATCH request.
 
         Args:
@@ -486,6 +539,16 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         self,
         path: str,
         *,
+        cast_to: TypeAdapter,
+        params: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> Any: ...
+
+    @overload
+    async def delete(
+        self,
+        path: str,
+        *,
         cast_to: None = None,
         params: dict[str, Any] | None = None,
         **kwargs,
@@ -495,10 +558,10 @@ class SpryxAsyncClient(SpryxClientBase, httpx.AsyncClient):
         self,
         path: str,
         *,
-        cast_to: type[T] | type[list[T]] | None = None,
+        cast_to: type[T] | type[list[T]] | TypeAdapter | None = None,
         params: dict[str, Any] | None = None,
         **kwargs,
-    ) -> T | list[T] | ResponseJson:
+    ) -> T | list[T] | Any | ResponseJson:
         """Send a DELETE request.
 
         Args:
