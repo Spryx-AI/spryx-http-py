@@ -75,7 +75,21 @@ class TestProcessResponseData:
         assert result.name == "Test"
         assert result.email == "test@example.com"
 
-    def test_process_json_response_with_data_wrapper(self, client, mock_response):
+    def test_process_json_response_with_data_wrapper_with_cast_to(self, client, mock_response):
+        """Test processing JSON response with standardized 'data' wrapper."""
+        test_data = {"id": 1, "name": "Test", "email": "test@example.com"}
+        response_data = {"data": test_data, "status": "success"}
+        mock_response.json.return_value = response_data
+
+        # Now returns the model response extracting 'data'
+        result = client._process_response_data(mock_response, cast_to=ResponseTestModel)
+
+        assert isinstance(result, ResponseTestModel)
+        assert result.id == 1
+        assert result.email == "test@example.com"
+
+
+    def test_process_json_response_with_data_wrapper_without_cast_to(self, client, mock_response):
         """Test processing JSON response with standardized 'data' wrapper."""
         test_data = {"id": 1, "name": "Test", "email": "test@example.com"}
         response_data = {"data": test_data, "status": "success"}
@@ -85,9 +99,8 @@ class TestProcessResponseData:
         result = client._process_response_data(mock_response, cast_to=None)
 
         assert result == response_data
-        assert result["data"]["id"] == 1
-        assert result["data"]["name"] == "Test"
-        assert result["data"]["email"] == "test@example.com"
+        assert result['data']['id'] == 1
+        assert result['data']['name'] == 'Test'
 
     def test_process_json_response_with_list_cast_to(self, client, mock_response):
         """Test processing JSON response with list model casting."""
