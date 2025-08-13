@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import httpx
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from spryx_http.auth_strategies import ClientCredentialsAuthStrategy
 from spryx_http.base import SpryxClientBase
@@ -28,6 +28,13 @@ class ResponseTestModel(BaseModel):
     name: str
     email: str
 
+class ResponseTestModelAdmin(BaseModel):
+    """Test model for validation."""
+
+    id: int
+    name: str
+    email: str
+    admin: bool
 
 class TestProcessResponseData:
     """Test suite for _process_response_data method usability and functionality."""
@@ -101,6 +108,22 @@ class TestProcessResponseData:
         assert result == response_data
         assert result['data']['id'] == 1
         assert result['data']['name'] == 'Test'
+
+    def test_process_json_response_with_cast_to_type_adapter(self, client, mock_response):
+        """Test processing JSON response with list model casting."""
+        test_data = [
+            {"id": 1, "name": "Test1", "email": "test1@example.com"},
+            {"id": 2, "name": "Test2", "email": "test2@example.com", "admin": True},
+        ]
+        mock_response.json.return_value = test_data
+
+        result = client._process_response_data(mock_response, cast_to=TypeAdapter(list[ResponseTestModel | ResponseTestModelAdmin]))
+
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert isinstance(result[0], ResponseTestModel) and (result[1], ResponseTestModelAdmin)
+        assert result[0].name == "Test1"
+        assert result[1].admin == True
 
     def test_process_json_response_with_list_cast_to(self, client, mock_response):
         """Test processing JSON response with list model casting."""
@@ -282,3 +305,5 @@ class TestProcessResponseData:
         assert model_result.id == 123
         assert model_result.name == "John Doe"
         assert model_result.email == "john@example.com"
+
+
