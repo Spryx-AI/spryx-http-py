@@ -78,7 +78,10 @@ class SpryxClientBase:
         Returns:
             Any: The response data.
         """
-        return response_json
+        if response_json:
+            data = response_json.get("data", response_json)
+            
+        return data
 
     def _parse_model_data(self, model_cls: type[T] | type[list[T]] | TypeAdapter, data: Any) -> T | list[T] | Any:
         """Parse data into a Pydantic model, list of models, or using TypeAdapter.
