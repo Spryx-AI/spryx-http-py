@@ -58,7 +58,7 @@ class ClientCredentialsAuthStrategy(AbstractAuthStrategy):
     async def authenticate_async(self, client: httpx.AsyncClient) -> dict[str, Any]:
         """Authenticate using OAuth 2.0 Client Credentials flow."""
         payload = {
-            "grant_type": "app_credentials",
+            "grant_type": "client_credentials",
             "client_id": self.client_id,
             "client_secret": self.client_secret,
         }
@@ -70,7 +70,7 @@ class ClientCredentialsAuthStrategy(AbstractAuthStrategy):
     def authenticate_sync(self, client: httpx.Client) -> dict[str, Any]:
         """Authenticate using OAuth 2.0 Client Credentials flow."""
         payload = {
-            "grant_type": "app_credentials",
+            "grant_type": "client_credentials",
             "client_id": self.client_id,
             "client_secret": self.client_secret,
         }
