@@ -30,6 +30,6 @@ class OAuthTokenResponse(BaseModel):
 
     access_token: str = Field(description="The access token issued by the authorization server")
     token_type: str = Field(default="Bearer", description="The type of the token (typically 'Bearer')")
-    expires_in: int = Field(description="The lifetime in seconds of the access token")
+    expires_in: int | None = Field(default=None, description="The lifetime in seconds of the access token")
     refresh_token: str | None = Field(default=None, description="The refresh token (if issued)")
     scope: str | None = Field(default=None, description="The scope of the access token (if different from requested)")
