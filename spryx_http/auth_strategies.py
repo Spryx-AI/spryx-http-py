@@ -137,7 +137,7 @@ class ClientCredentialsAuthStrategy(AbstractAuthStrategy):
         token_data = OAuthTokenResponse.model_validate(response)
         self._access_token = token_data.access_token
         self._refresh_token = token_data.refresh_token
-        self._token_expires_at = int(time.time()) + token_data.expires_in
+        self._token_expires_at = int(time.time()) + token_data.expires_in if token_data.expires_in else None
 
 
 @dataclass
